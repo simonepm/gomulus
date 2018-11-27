@@ -1,0 +1,7 @@
+config
+data
+.vscode
+.idea
+*.so
+.DS_Store
+NOTES.md
