@@ -255,10 +255,12 @@ func Run(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugins 
 
 	case "csv":
 
+		found = true
 		source = &sources.DefaultCSVSource{}
 
 	case "mysql":
 
+		found = true
 		source = &sources.DefaultMysqlSource{}
 
 	default:
@@ -298,10 +300,12 @@ func Run(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugins 
 
 	case "csv":
 
+		found = true
 		destination = &destinations.DefaultCSVDestination{}
 
 	case "mysql":
 
+		found = true
 		destination = &destinations.DefaultMysqlDestination{}
 
 	default:

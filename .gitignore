@@ -1,7 +1,12 @@
-config
-data
 .vscode
 .idea
+config
+data
 *.so
+*.app
+*.bin
 .DS_Store
 NOTES.md
+pkg
+src
+!src/gomulus
