@@ -3,10 +3,10 @@ package gomulus
 import (
 	"bufio"
 	"encoding/csv"
+	"gomulus"
 	"io"
 	"math"
 	"os"
-	"gomulus"
 	"strings"
 )
 
@@ -17,6 +17,7 @@ type DefaultCSVSource struct {
 	Path   string
 	Limit  int
 	EOF    string
+	Strip  bool
 }
 
 // New ...
@@ -27,6 +28,7 @@ func (s *DefaultCSVSource) New(config gomulus.DriverConfig) error {
 	var limit, _ = config.Options["limit"].(float64)
 	var endpoint, _ = config.Options["endpoint"].(string)
 	var eof, _ = config.Options["line_separator"].(string)
+	var strip, _ = config.Options["strip_header"].(bool)
 	var rowLimit = int(math.Max(1, limit))
 
 	if eof == "" {
@@ -41,6 +43,7 @@ func (s *DefaultCSVSource) New(config gomulus.DriverConfig) error {
 	s.Path = endpoint
 	s.Limit = rowLimit
 	s.EOF = eof
+	s.Strip = strip
 
 	return nil
 
@@ -49,12 +52,16 @@ func (s *DefaultCSVSource) New(config gomulus.DriverConfig) error {
 // GetTasks ...
 func (s *DefaultCSVSource) GetTasks() ([]gomulus.SelectionTask, error) {
 
-	count := 0
-	offset := 0
-	bytes := 0
+	var count int
+	var offset int
+	var bytes int
+
 	tasks := make([]gomulus.SelectionTask, 0)
 	lines := make(map[int]int, 0)
+
 	scanner := bufio.NewScanner(s.File)
+
+	count = 0
 
 	for scanner.Scan() {
 
@@ -68,9 +75,18 @@ func (s *DefaultCSVSource) GetTasks() ([]gomulus.SelectionTask, error) {
 		return nil, scanner.Err()
 	}
 
+	total := count
+	count = 0
+
 	for true {
 
-		if offset > count {
+		count++
+
+		if count == 1 && s.Strip {
+			offset += 1
+		}
+
+		if offset > total {
 			break
 		}
 
