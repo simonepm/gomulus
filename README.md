@@ -12,18 +12,18 @@ GOmulus is also easy to configure. Pass a JSON configuration file telling the sc
 
 ## Dependences
 
-By default GOmulus depends on two GO packages:
+By default GOmulus depends only on two GO packages:
 
     # go get github.com/go-sql-driver/mysql
     # go get github.com/gofrs/flock
 
 ## Build
 
-    # go build -o ./GOmulus ./main.go
+    # go build -o ./gomulus ./main.go
 
 ## Run
 
-    # ./GOmulus --config "./config/path/name.json"
+    # ./gomulus --config "./config/path/name.json"
 
 ## Configuration
 
@@ -35,7 +35,6 @@ A driver needs some kind of configuration to run on your data endpoint, so the o
 ### Simple example
 
     {
-      "timeout": 10000,
       "source": {
         "driver": "mysql",
         "pool": 4,
@@ -63,9 +62,9 @@ In this basic example GOmulus will select 1000 rows per concurrent routine (4 in
 "mysql" and "csv" are only the default drivers provided to get your hands dirt on a first run.
 But you can extend GOmulus by adding your custom data sources and destinations as follows.
 
-###TL;DR
+### TL;DR
 
-In the ./plugin/ directory of this repository you can find ready-made examples of a source and a destination custom driver. Build them by using the `go build -buildmode=plugin` command and import following the "configuration example with a custom destination driver" section.
+In the `./plugin` directory in the root of this repository you can find ready-made examples of a source and a destination custom driver. Build them by using the `go build -buildmode=plugin` command and import following the __"Configuration example with a custom destination driver"__ section.
 
 ### Extend the default source interface
 
@@ -77,7 +76,7 @@ Develop your custom source driver by extending the default source GO interface:
         ProcessTask(SelectionTask) ([][]interface{}, error)
     }
 
-The `New(DriverConfig) error` method of your driver should expect a DriverConfig GO structure:
+The `New(DriverConfig) error` method of your driver should expect a `DriverConfig` GO structure:
 
     type DriverConfig struct {
       Driver  string                 `json:"driver"`
@@ -85,7 +84,7 @@ The `New(DriverConfig) error` method of your driver should expect a DriverConfig
       Options map[string]interface{} `json:"options,omitempty"`
     }
     
-So you can easily access the Options parameter, parsed from the JSON configuration file option parameter of your driver.
+So you can easily access the `DriverConfig.Options` parameter, parsed from the JSON configuration of your driver.
 
 The `GetTasks() ([]SelectionTask, error)` method should return a slice of selection operations in the form of `[]SelectionTask`
 
@@ -111,7 +110,7 @@ Develop your custom destination driver by extending the destination GO interface
         ProcessTask(InsertionTask) (int, error)
     }
     
-The `New(DriverConfig) error` method of your driver should expect a DriverConfig GO structure:
+The `New(DriverConfig) error` method of your driver should expect a `DriverConfig` GO structure:
 
     type DriverConfig struct {
       Driver  string                 `json:"driver"`
@@ -119,7 +118,7 @@ The `New(DriverConfig) error` method of your driver should expect a DriverConfig
       Options map[string]interface{} `json:"options,omitempty"`
     }
     
-So you can easily access the Options parameter parsed from the JSON configuration file.
+So you can easily access the `DriverConfig.Options` parameter, parsed from the JSON configuration of your driver.
 
 The `GetTask([][]interface{}) (InsertionTask, error)` method should return an insertion operation in the form of an `InsertionTask` in which `Meta` is a `map[string]interface{}` containing optional custom info to help the `ProcessTask(InsertionTask) (int, error)` method to perform the insertion operation.
 
@@ -128,7 +127,7 @@ The `GetTask([][]interface{}) (InsertionTask, error)` method should return an in
       Data [][]interface{}
     }
 
-`GetTask([][]interface{}) (InsertionTask, error)` gets the selected Data from the source in the form of `[][]interface{}` as argument, this argument should be passed AS IS to the returned `InsertionTask.Data` parameter.
+__ATTENTION:__ `GetTask([][]interface{}) (InsertionTask, error)` gets the selected data from the source in the form of `[][]interface{}` as argument, this argument should be passed AS IS to the returned `InsertionTask.Data` parameter.
 
 The purpose of getting it in this early step is only if you need it to populate the `InsertionTask.Meta` parameter accordingly.
 
