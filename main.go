@@ -37,6 +37,12 @@ var DestinationInstance gomulus.DestinationInterface
 // PendingTasksCount ...
 var PendingTasksCount int64
 
+// SelectionChannelLength
+var SelectionChannelLength = 1000
+
+// InsertionChannelLength
+var InsertionChannelLength = 1000
+
 func init() {
 	rand.Seed(time.Now().Unix())
 }
@@ -75,8 +81,6 @@ func main() {
 	Source := config.Source
 	Destination := config.Destination
 
-	SelectionChannelLength := 1000
-
 	SelectionTaskPool = make(map[int]chan gomulus.SelectionTask, 0)
 
 	for i := 1; i <= int(math.Max(1, float64(Source.Pool))); i++ {
@@ -85,10 +89,6 @@ func main() {
 
 	}
 
-	// TODO limit selection->insertion rate
-
-	InsertionChannelLength := 1000
-
 	InsertionTaskPool = make(map[int]chan gomulus.InsertionTask, 0)
 
 	for i := 1; i <= int(math.Max(1, float64(Destination.Pool))); i++ {
@@ -96,6 +96,8 @@ func main() {
 		InsertionTaskPool[i] = make(chan gomulus.InsertionTask, InsertionChannelLength)
 
 	}
+
+	// Listen
 
 	go func() {
 
@@ -123,13 +125,25 @@ func main() {
 
 						} else {
 
-							queuesLengths := make(map[int]int, 0)
+							minLengthQueue := 0
 
-							for id, queue := range InsertionTaskPool {
-								queuesLengths[id] = len(queue)
+							for true {
+
+								queuesLengths := make(map[int]int, 0)
+
+								for id, queue := range InsertionTaskPool {
+									queuesLengths[id] = len(queue)
+								}
+
+								minLengthQueue = GetShortestQueue(queuesLengths)
+
+								if len(InsertionTaskPool[minLengthQueue]) <= 0 || len(InsertionTaskPool[minLengthQueue]) < InsertionChannelLength {
+									break
+								}
+
+								time.Sleep(time.Second)
+
 							}
-
-							minLengthQueue := GetShortestQueue(queuesLengths)
 
 							InsertionTaskPool[minLengthQueue] <- InsertionTask
 
@@ -181,26 +195,6 @@ func main() {
 		panic(err)
 	}
 
-	SelectionTasks, err := SourceInstance.GetTasks()
-
-	queuesLengths := make(map[int]int, 0)
-
-	for id, queue := range SelectionTaskPool {
-
-		queuesLengths[id] = len(queue)
-
-	}
-
-	for _, SelectionTask := range SelectionTasks {
-
-		atomic.AddInt64(&PendingTasksCount, 1)
-
-		minLengthQueue := GetShortestQueue(queuesLengths)
-
-		SelectionTaskPool[minLengthQueue] <- SelectionTask
-
-	}
-
 	// Exit
 
 	sigterm := make(chan os.Signal, 2)
@@ -246,6 +240,8 @@ func Run(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugins 
 	var sourcePlugins []gomulus.PluginConfig
 	var destinationPlugins []gomulus.PluginConfig
 
+	// init drivers
+
 	sourcePlugins = Plugins.Sources
 	destinationPlugins = Plugins.Destinations
 
@@ -288,10 +284,6 @@ func Run(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugins 
 
 		return nil, nil, fmt.Errorf("no source driver found under the name `%s`", Source.Driver)
 
-	}
-
-	if err = source.New(Source); err != nil {
-		return nil, nil, err
 	}
 
 	found = false
@@ -341,9 +333,57 @@ func Run(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugins 
 
 	}
 
+	// generate new source and destination instance
+
+	if err = source.New(Source); err != nil {
+		return nil, nil, err
+	}
+
 	if err = destination.New(Destination); err != nil {
 		return nil, nil, err
 	}
+
+	// spawn selection tasks
+
+	SelectionTasks, err := source.GetTasks()
+
+	queuesLengths := make(map[int]int, 0)
+
+	for id, queue := range SelectionTaskPool {
+
+		queuesLengths[id] = len(queue)
+
+	}
+
+	for _, SelectionTask := range SelectionTasks {
+
+		atomic.AddInt64(&PendingTasksCount, 1)
+
+		minLengthQueue := 0
+
+		for true {
+
+			queuesLengths := make(map[int]int, 0)
+
+			for id, queue := range InsertionTaskPool {
+				queuesLengths[id] = len(queue)
+			}
+
+			minLengthQueue = GetShortestQueue(queuesLengths)
+
+			if len(SelectionTaskPool[minLengthQueue]) <= 0 || len(SelectionTaskPool[minLengthQueue]) < SelectionChannelLength {
+				break
+			}
+
+			time.Sleep(time.Second)
+
+		}
+
+		SelectionTaskPool[minLengthQueue] <- SelectionTask
+
+	}
+
+	// return
 
 	return source, destination, nil
 
