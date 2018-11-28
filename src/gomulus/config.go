@@ -20,8 +20,8 @@ func (c *Config) Unmarshal(data []byte) error {
 
 // PluginsConfig ...
 type PluginsConfig struct {
-	Sources      []PluginConfig `json:"sources"`
-	Destinations []PluginConfig `json:"destinations"`
+	Sources      []PluginConfig `json:"sources,omitempty"`
+	Destinations []PluginConfig `json:"destinations,omitempty"`
 }
 
 // PluginConfig ...
