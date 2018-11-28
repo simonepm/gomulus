@@ -48,7 +48,6 @@ A driver needs some kind of configuration to run on your data endpoint, so the o
         "driver": "csv",
         "pool": 1,
         "options": {
-          "limit":    1000,
           "endpoint": "./data/csv/path/name.csv",
           "truncate": true
         }
