@@ -6,13 +6,13 @@ Fast, modular and extensible data-forklift pool manager written in GO.
 
 GOmulus is a tool for moving data-sets from any source to any destination.
 
-By default you can move data from/to MySQL tables and CSV files, but GOmulus is easily exensible by building .so plugins that follows a lean GO interface.
+By default you can move data from MySQL tables to CSV files and viceversa, but GOmulus is easily exensible with any data source by building .so plugins that follows a lean GO interface.
 
-GOmulus is also easy to configure. Pass a JSON configuration file telling the script the designated source, destination and how many concurrent operations of selection and insertion is allowed to perform (specifing a pool dimension as integer greater or equal to 1) and you are ready to... GO.
+GOmulus is also easy to configure. Pass just one JSON configuration file telling the script the designated source, destination and how many concurrent operations of selection and insertion is allowed to perform (specifing a pool dimension as integer greater or equal to 1) and you are ready to... GO.
 
-## Dependences
+## Installation
 
-By default GOmulus depends only on two GO packages:
+By default GOmulus depends only on two packages:
 
     # go get github.com/go-sql-driver/mysql
     # go get github.com/gofrs/flock
@@ -28,9 +28,9 @@ By default GOmulus depends only on two GO packages:
 ## Configuration
 
 As depicted above, you should pass a JSON configuration file that declares a source and a destination.
-Every source and destination has its own driver and every driver can perform concurrent operations by increasing the pool parameter (from 1 to N).
+Every source and destination has its own driver and every driver can perform concurrent operations by increasing the pool parameter value (from 1 to N; suggested 1 per CPU).
 
-A driver needs some kind of configuration to run on your data endpoint, so the option parameter is here just to address this need.
+A driver requires some kind of configuration to run on your data endpoint; the `option` parameter is here right to address this need.
 
 ### Simple example
 
@@ -54,16 +54,17 @@ A driver needs some kind of configuration to run on your data endpoint, so the o
       }
     }
 
-In this basic example GOmulus will select 1000 rows per concurrent routine (4 in total) and will persist the selected data on a CSV file, truncated beforehand.
+In the basic example above, GOmulus will select 1000 rows per routine (4 in total) and will persist the selected data on a CSV file, truncated beforehand, or created if it doesn't exists already.
 
 ## Custom sources and destinations
 
-"mysql" and "csv" are only the default drivers provided to get your hands dirt on a first run.
-But you can extend GOmulus by adding your custom data sources and destinations as follows.
+"mysql" and "csv" are the default drivers provided to get your hands dirt on a first run.
+
+But you can extend GOmulus by adding any custom data source or destination as follows.
 
 ### TL;DR
 
-In the `./plugin` directory in the root of this repository you can find ready-made examples of a source and a destination custom driver. Build them by using the `go build -buildmode=plugin` command and import following the __"Configuration example with a custom destination driver"__ section.
+In the `./plugin` directory in the root of this repository you can find ready-made examples of a source and a destination custom drivers. Build and import them by using the `go build -buildmode=plugin` command and following the __"Configuration example with a custom destination driver"__ section.
 
 ### Extend the default source interface
 
@@ -91,9 +92,11 @@ The `GetTasks() ([]SelectionTask, error)` method should return a slice of select
       Meta map[string]interface{}
     }
 
-Is the `ProcessTask(SelectionTask) ([][]interface{}, error)` method that should effectively perform the selection operation by following the info contained in the `SelectionTask.Meta` parameter passed to it.
 
-It should return the selected data in the form of `[][]interface{}` that will be automatically passed to the `GetTask([][]interface{}) (InsertionTask, error)` method of the destination driver and persited by the `ProcessTask(InsertionTask) (int, error)` method of the latter.
+`ProcessTask(SelectionTask) ([][]interface{}, error)` is the method that should effectively perform the selection operation by following the info contained in the `SelectionTask.Meta` parameter passed to it and returning the selected data in the form of `[][]interface{}`.
+
+__ATTENTION:__
+Selected data will be passed by GOmulus to the `GetTask([][]interface{}) (InsertionTask, error)` method of the destination driver and persited by `ProcessTask(InsertionTask) (int, error)` method thereof.
 
 #### Build your custom source driver
     
@@ -119,18 +122,17 @@ The `New(DriverConfig) error` method of your driver should expect a `DriverConfi
     
 So you can easily access the `DriverConfig.Options` parameter, parsed from the JSON configuration of your driver.
 
-The `GetTask([][]interface{}) (InsertionTask, error)` method should return an insertion operation in the form of an `InsertionTask` in which `Meta` is a `map[string]interface{}` containing optional custom info to help the `ProcessTask(InsertionTask) (int, error)` method to perform the insertion operation.
+The `GetTask([][]interface{}) (InsertionTask, error)` method should return an insertion operation in the form of an `InsertionTask` in which `Meta` is a `map[string]interface{}` containing optional custom info to help the `ProcessTask(InsertionTask) (int, error)` method to perform the subsequent insertion operation.
 
     type InsertionTask struct {
       Meta map[string]interface{}
       Data [][]interface{}
     }
 
-__ATTENTION:__ `GetTask([][]interface{}) (InsertionTask, error)` gets the selected data from the source in the form of `[][]interface{}` as argument, this argument should be passed AS IS to the returned `InsertionTask.Data` parameter.
+__ATTENTION:__
+`GetTask([][]interface{}) (InsertionTask, error)` gets the selected data from the source as argument in the form of `[][]interface{}` and should return it AS IS inside the `InsertionTask.Data` parameter. The purpose of having it in this early step is only if you need it to populate the `InsertionTask.Meta` parameter accordingly.
 
-The purpose of getting it in this early step is only if you need it to populate the `InsertionTask.Meta` parameter accordingly.
-
-Is the `ProcessTask(InsertionTask) (int, error)` method that should effectively perform the insertion operation of the `InsertionTask.Data` by optionally using the `InsertionTask.Meta` parameter as helper.
+`ProcessTask(InsertionTask) (int, error)` is the method that should effectively perform the insertion operation of the content of `InsertionTask.Data` parameter; optionally using the info inside the `InsertionTask.Meta` parameter as helper.
 
 #### Build your custom destination driver
     
