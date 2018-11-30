@@ -3,16 +3,15 @@ package main
 import (
 	"flag"
 	"fmt"
+	"gomulus"
+	destinations "gomulus/destination"
+	sources "gomulus/source"
 	"io/ioutil"
 	"math"
-	"math/rand"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"plugin"
-	"gomulus"
-	sources "gomulus/source"
-	destinations "gomulus/destination"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -42,10 +41,6 @@ var SelectionChannelLength = 1000
 
 // InsertionChannelLength
 var InsertionChannelLength = 1000
-
-func init() {
-	rand.Seed(time.Now().Unix())
-}
 
 func main() {
 
@@ -97,6 +92,12 @@ func main() {
 
 	}
 
+	// Run
+
+	if SourceInstance, DestinationInstance, err = Run(Source, Destination, config.Plugins); err != nil {
+		panic(err)
+	}
+
 	// Listen
 
 	go func() {
@@ -141,7 +142,7 @@ func main() {
 									break
 								}
 
-								time.Sleep(time.Second)
+								time.Sleep(time.Millisecond * 500)
 
 							}
 
@@ -188,12 +189,6 @@ func main() {
 		}
 
 	}()
-
-	// Run
-
-	if SourceInstance, DestinationInstance, err = Run(Source, Destination, config.Plugins); err != nil {
-		panic(err)
-	}
 
 	// Exit
 
@@ -355,33 +350,27 @@ func Run(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugins 
 
 	}
 
-	for _, SelectionTask := range SelectionTasks {
+	go func() {
 
-		atomic.AddInt64(&PendingTasksCount, 1)
+		for _, SelectionTask := range SelectionTasks {
 
-		minLengthQueue := 0
+			atomic.AddInt64(&PendingTasksCount, 1)
 
-		for true {
+			minLengthQueue := 0
 
 			queuesLengths := make(map[int]int, 0)
 
-			for id, queue := range InsertionTaskPool {
+			for id, queue := range SelectionTaskPool {
 				queuesLengths[id] = len(queue)
 			}
 
 			minLengthQueue = GetShortestQueue(queuesLengths)
 
-			if len(SelectionTaskPool[minLengthQueue]) <= 0 || len(SelectionTaskPool[minLengthQueue]) < SelectionChannelLength {
-				break
-			}
-
-			time.Sleep(time.Second)
+			SelectionTaskPool[minLengthQueue] <- SelectionTask
 
 		}
 
-		SelectionTaskPool[minLengthQueue] <- SelectionTask
-
-	}
+	}()
 
 	// return
 
@@ -393,7 +382,7 @@ func Run(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugins 
 func GetShortestQueue(lengths map[int]int) int {
 
 	var minLength = math.MaxInt64
-	var minLengthQueue = 0 // RandInt(1, len(lengths))
+	var minLengthQueue int
 
 	if minLengthQueue == 0 {
 		for id, length := range lengths {
@@ -406,9 +395,4 @@ func GetShortestQueue(lengths map[int]int) int {
 
 	return minLengthQueue
 
-}
-
-// RandInt ...
-func RandInt(min, max int) int {
-	return rand.Intn(max - min) + min
 }
