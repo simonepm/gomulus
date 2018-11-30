@@ -4,9 +4,9 @@ import (
 	"encoding/csv"
 	"fmt"
 	"github.com/gofrs/flock"
+	"gomulus"
 	"os"
 	"path/filepath"
-	"gomulus"
 )
 
 // DefaultCSVDestination ...
