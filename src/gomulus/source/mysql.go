@@ -3,17 +3,19 @@ package gomulus
 import (
 	"database/sql"
 	"fmt"
-	"math"
+	_ "github.com/go-sql-driver/mysql"
 	"gomulus"
+	"math"
 )
 
 // DefaultMysqlSource ...
 type DefaultMysqlSource struct {
-	Config gomulus.DriverConfig
-	DB     *sql.DB
-	Limit  int
-	Count  int
-	Table  string
+	Config  gomulus.DriverConfig
+	DB      *sql.DB
+	Limit   int
+	Count   int
+	Table   string
+	Columns string
 }
 
 // New ...
@@ -21,20 +23,19 @@ func (s *DefaultMysqlSource) New(config gomulus.DriverConfig) error {
 
 	var err error
 	var db *sql.DB
-	var count = 0
-	var limit = config.Options["limit"].(float64)
-	var table = config.Options["table"].(string)
+	var count, _ = config.Options["count"].(float64)
 	var endpoint, _ = config.Options["endpoint"].(string)
-	var rowLimit = int(math.Max(1, limit))
+	var table = config.Options["table"].(string)
+	var limit = config.Options["limit"].(float64)
+	var columns = config.Options["columns"].(string)
+	var tables = make([]string, 0)
+	var rows *sql.Rows
 
 	if db, err = sql.Open("mysql", endpoint); err != nil {
 		return err
 	}
 
 	s.DB = db
-
-	var tables = make([]string, 0)
-	var rows *sql.Rows
 
 	if rows, err = db.Query("SHOW TABLES"); err != nil {
 		return err
@@ -49,18 +50,21 @@ func (s *DefaultMysqlSource) New(config gomulus.DriverConfig) error {
 		tables = append(tables, t)
 	}
 
-	if !InSliceString(table, tables) {
+	if !inSlice(table, tables) {
 		return fmt.Errorf("table not found `%s`", table)
 	}
 
 	s.Table = table
 
-	if err = db.QueryRow(fmt.Sprintf("SELECT COUNT(0) FROM %s", table)).Scan(&count); err != nil {
-		return err
+	if count == 0 {
+		if err = db.QueryRow(fmt.Sprintf("SELECT COUNT(0) FROM %s", table)).Scan(&count); err != nil {
+			return err
+		}
 	}
 
-	s.Count = count
-	s.Limit = rowLimit
+	s.Count = int(count)
+	s.Limit = int(math.Max(1, limit))
+	s.Columns = columns
 
 	return nil
 
@@ -78,7 +82,7 @@ func (s *DefaultMysqlSource) GetTasks() ([]gomulus.SelectionTask, error) {
 			break
 		}
 
-		query := fmt.Sprintf("SELECT * FROM %s LIMIT %d, %d", s.Table, offset, s.Limit)
+		query := fmt.Sprintf("SELECT %s FROM %s LIMIT %d, %d", s.Columns, s.Table, offset, s.Limit)
 
 		offset += s.Limit
 
@@ -128,11 +132,11 @@ func Select(db *sql.DB, query string) ([][]interface{}, error) {
 			pointers[i] = &values[i]
 		}
 
-		rows.Scan(pointers...)
+		if err = rows.Scan(pointers...); err != nil {
+			return nil, err
+		}
 
-		err = rows.Err()
-
-		if err != nil {
+		if err = rows.Err(); err != nil {
 			return nil, err
 		}
 
@@ -144,8 +148,7 @@ func Select(db *sql.DB, query string) ([][]interface{}, error) {
 
 }
 
-// InSliceString ...
-func InSliceString(a string, list []string) bool {
+func inSlice(a string, list []string) bool {
 
 	for _, b := range list {
 		if b == a {

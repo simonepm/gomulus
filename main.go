@@ -7,12 +7,12 @@ import (
 	destinations "gomulus/destination"
 	sources "gomulus/source"
 	"io/ioutil"
+	"log"
 	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"plugin"
-	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -56,11 +56,11 @@ func main() {
 	var configFile *os.File
 
 	if configPath, err = filepath.Abs(*FlagConfig); err != nil {
-		panic(err)
+		log.Fatal(err.Error())
 	}
 
 	if configFile, err = os.Open(configPath); err != nil {
-		panic(err)
+		log.Fatal(err.Error())
 	}
 
 	configJSON, _ := ioutil.ReadAll(configFile)
@@ -68,10 +68,10 @@ func main() {
 	_ = configFile.Close()
 
 	if err = config.Unmarshal(configJSON); err != nil {
-		panic(err)
+		log.Fatal(err.Error())
 	}
 
-	// Init
+	log.Print("initializing...")
 
 	Source := config.Source
 	Destination := config.Destination
@@ -92,13 +92,13 @@ func main() {
 
 	}
 
-	// Run
+	log.Print("starting...")
 
-	if SourceInstance, DestinationInstance, err = Run(Source, Destination, config.Plugins); err != nil {
-		panic(err)
+	if SourceInstance, DestinationInstance, err = Start(Source, Destination, config.Plugins); err != nil {
+		log.Fatal(err.Error())
 	}
 
-	// Listen
+	log.Print("waiting for selection tasks...")
 
 	go func() {
 
@@ -112,7 +112,7 @@ func main() {
 
 						atomic.AddInt64(&PendingTasksCount, -1)
 
-						fmt.Fprintln(os.Stderr, "failed task on selection queue", q, "; an error occurred:", err.Error())
+						log.Print("failed task on selection queue ", q, "; an error occurred: ", err.Error())
 
 					} else {
 
@@ -122,7 +122,7 @@ func main() {
 
 							atomic.AddInt64(&PendingTasksCount, -1)
 
-							fmt.Fprintln(os.Stderr, "failed insertion task generation on selection queue", q, "; an error occurred:", err.Error())
+							log.Print("failed insertion task generation on selection queue ", q, "; an error occurred: ", err.Error())
 
 						} else {
 
@@ -148,7 +148,7 @@ func main() {
 
 							InsertionTaskPool[minLengthQueue] <- InsertionTask
 
-							fmt.Fprintln(os.Stdout, "selected", len(data), "rows by selection task on queue", q)
+							log.Print("selected ", len(data), " rows by selection task on queue ", q)
 
 						}
 
@@ -162,6 +162,8 @@ func main() {
 
 	}()
 
+	log.Print("waiting for insertion tasks...")
+
 	go func() {
 
 		for q, concurrentInsert := range InsertionTaskPool {
@@ -174,11 +176,11 @@ func main() {
 
 					if n, err := DestinationInstance.ProcessTask(InsertionTask); err != nil {
 
-						fmt.Fprintln(os.Stderr, "failed task on insertion queue", q, "; lost", n, "rows due to an error: ", err.Error())
+						log.Print("failed task on insertion queue ", q, "; lost ", n, " rows due to an error: ", err.Error())
 
 					} else {
 
-						fmt.Fprintln(os.Stdout, "stored", n, "rows by insertion task on queue", q)
+						log.Print("stored ", n, " rows by insertion task on queue ", q)
 
 					}
 
@@ -190,7 +192,7 @@ func main() {
 
 	}()
 
-	// Exit
+	log.Print("running...")
 
 	sigterm := make(chan os.Signal, 2)
 
@@ -206,7 +208,7 @@ func main() {
 			case <-timeTimer.C:
 				timeElapsed++
 				if timeOut > 0 && timeElapsed > timeOut {
-					panic(fmt.Errorf("timed out after %d seconds", timeOut))
+					log.Fatal(fmt.Sprintf("timed out after %d seconds", timeOut))
 				}
 				if atomic.LoadInt64(&PendingTasksCount) == 0 {
 					sigterm <- syscall.SIGINT
@@ -219,14 +221,14 @@ func main() {
 
 	<-sigterm
 
-	fmt.Fprintln(os.Stdout, "DONE, took", time.Now().Unix()-started.Unix(), "seconds")
+	log.Print("DONE, took ", time.Now().Unix()-started.Unix(), " seconds")
 
 	os.Exit(0)
 
 }
 
-// Run ...
-func Run(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugins gomulus.PluginsConfig) (gomulus.SourceInterface, gomulus.DestinationInterface, error) {
+// Start ...
+func Start(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugins gomulus.PluginsConfig) (gomulus.SourceInterface, gomulus.DestinationInterface, error) {
 
 	var err error
 	var found bool
@@ -235,10 +237,10 @@ func Run(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugins 
 	var sourcePlugins []gomulus.PluginConfig
 	var destinationPlugins []gomulus.PluginConfig
 
-	// init drivers
-
 	sourcePlugins = Plugins.Sources
 	destinationPlugins = Plugins.Destinations
+
+	log.Print("selecting source driver...")
 
 	found = false
 
@@ -261,11 +263,11 @@ func Run(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugins 
 				found = true
 				pc.Path, err = filepath.Abs(pc.Path)
 				if err != nil {
-					panic(err)
+					log.Fatal(err.Error())
 				}
 				plug, err := plugin.Open(pc.Path)
 				if err != nil {
-					panic(err)
+					log.Fatal(err.Error())
 				}
 				symbol, err := plug.Lookup(pc.Name)
 				source, _ = symbol.(gomulus.SourceInterface)
@@ -280,6 +282,8 @@ func Run(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugins 
 		return nil, nil, fmt.Errorf("no source driver found under the name `%s`", Source.Driver)
 
 	}
+
+	log.Print("selecting destination driver...")
 
 	found = false
 
@@ -302,18 +306,15 @@ func Run(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugins 
 				found = true
 				pc.Path, err = filepath.Abs(pc.Path)
 				if err != nil {
-					panic(err)
+					log.Fatal(err.Error())
 				}
 				plug, err := plugin.Open(pc.Path)
 				if err != nil {
-					panic(err)
+					log.Fatal(err.Error())
 				}
-				if pc.Symbol == "" {
-					pc.Symbol = fmt.Sprintf("%s%s", strings.Title(pc.Name), "Destination")
-				}
-				symbol, err := plug.Lookup(pc.Symbol)
+				symbol, err := plug.Lookup(pc.Name)
 				if err != nil {
-					panic(err)
+					log.Fatal(err.Error())
 				}
 				destination, _ = symbol.(gomulus.DestinationInterface)
 				break
@@ -328,17 +329,21 @@ func Run(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugins 
 
 	}
 
-	// generate new source and destination instance
+	log.Print("starting a new destination driver instance...")
+
+	err = destination.New(Destination)
+
+	if err != nil {
+		return nil, nil, err
+	}
+
+	log.Print("starting a new source driver instance...")
 
 	if err = source.New(Source); err != nil {
 		return nil, nil, err
 	}
 
-	if err = destination.New(Destination); err != nil {
-		return nil, nil, err
-	}
-
-	// spawn selection tasks
+	log.Print("getting selection tasks...")
 
 	SelectionTasks, err := source.GetTasks()
 
@@ -349,6 +354,8 @@ func Run(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugins 
 		queuesLengths[id] = len(queue)
 
 	}
+
+	log.Print("spinning selection tasks...")
 
 	go func() {
 
@@ -371,8 +378,6 @@ func Run(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugins 
 		}
 
 	}()
-
-	// return
 
 	return source, destination, nil
 

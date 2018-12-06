@@ -7,6 +7,7 @@ import (
 	"gomulus"
 	"os"
 	"path/filepath"
+
 )
 
 // DefaultCSVDestination ...
