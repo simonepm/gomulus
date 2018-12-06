@@ -18,36 +18,26 @@ import (
 	"time"
 )
 
-// FlagConfig ...
-var FlagConfig = flag.String("config", "./gomulus.json", "JSON config file path")
+var FlagConfig = flag.String("config", "./config/config.json", "JSON config file path")
 
-// SelectionTaskPool ...
-var SelectionTaskPool map[int]chan gomulus.SelectionTask
-
-// InsertionTaskPool ...
-var InsertionTaskPool map[int]chan gomulus.InsertionTask
-
-// SourceInstance ...
 var SourceInstance gomulus.SourceInterface
 
-// DestinationInstance ...
 var DestinationInstance gomulus.DestinationInterface
 
-// PendingTasksCount ...
-var PendingTasksCount int64
+var FetchPool map[int]chan map[string]interface{}
 
-// SelectionChannelLength
-var SelectionChannelLength = 1000
+var PersistPool map[int]chan [][]interface{}
 
-// InsertionChannelLength
-var InsertionChannelLength = 1000
+var FetchChannelLength = 1000
+
+var PersistChannelLength = 1000
+
+var PendingJobsCount int64
 
 func main() {
 
 	var err error
 	var started = time.Now()
-
-	// Config
 
 	flag.Parse()
 
@@ -71,24 +61,22 @@ func main() {
 		log.Fatal(err.Error())
 	}
 
-	log.Print("initializing...")
-
 	Source := config.Source
 	Destination := config.Destination
 
-	SelectionTaskPool = make(map[int]chan gomulus.SelectionTask, 0)
+	FetchPool = make(map[int]chan map[string]interface{}, 0)
 
 	for i := 1; i <= int(math.Max(1, float64(Source.Pool))); i++ {
 
-		SelectionTaskPool[i] = make(chan gomulus.SelectionTask, SelectionChannelLength)
+		FetchPool[i] = make(chan map[string]interface{}, FetchChannelLength)
 
 	}
 
-	InsertionTaskPool = make(map[int]chan gomulus.InsertionTask, 0)
+	PersistPool = make(map[int]chan [][]interface{}, 0)
 
 	for i := 1; i <= int(math.Max(1, float64(Destination.Pool))); i++ {
 
-		InsertionTaskPool[i] = make(chan gomulus.InsertionTask, InsertionChannelLength)
+		PersistPool[i] = make(chan [][]interface{}, PersistChannelLength)
 
 	}
 
@@ -98,47 +86,45 @@ func main() {
 		log.Fatal(err.Error())
 	}
 
-	log.Print("waiting for selection tasks...")
-
 	go func() {
 
-		for q, concurrentSelect := range SelectionTaskPool {
+		for q, Selection := range FetchPool {
 
-			go func(SelectionChannel chan gomulus.SelectionTask, q int) {
+			go func(FetchChannel chan map[string]interface{}, q int) {
 
-				for SelectionTask := range SelectionChannel {
+				for job := range FetchChannel {
 
-					if data, err := SourceInstance.ProcessTask(SelectionTask); err != nil {
+					if data, err := SourceInstance.FetchData(job); err != nil {
 
-						atomic.AddInt64(&PendingTasksCount, -1)
+						atomic.AddInt64(&PendingJobsCount, -1)
 
-						log.Print("failed task on selection queue ", q, "; an error occurred: ", err.Error())
+						log.Print("failed fetch-job on queue ", q, "; an error occurred: ", err.Error())
 
 					} else {
 
-						InsertionTask, err := DestinationInstance.GetTask(data)
+						data, err := DestinationInstance.PreProcessData(data)
 
 						if err != nil {
 
-							atomic.AddInt64(&PendingTasksCount, -1)
+							atomic.AddInt64(&PendingJobsCount, -1)
 
-							log.Print("failed insertion task generation on selection queue ", q, "; an error occurred: ", err.Error())
+							log.Print("failed pre-processing on queue ", q, "; an error occurred: ", err.Error())
 
 						} else {
 
-							minLengthQueue := 0
+							queue := 0
 
 							for true {
 
-								queuesLengths := make(map[int]int, 0)
+								lengths := make(map[int]int, 0)
 
-								for id, queue := range InsertionTaskPool {
-									queuesLengths[id] = len(queue)
+								for id, queue := range PersistPool {
+									lengths[id] = len(queue)
 								}
 
-								minLengthQueue = GetShortestQueue(queuesLengths)
+								queue = GetShortestQueue(lengths)
 
-								if len(InsertionTaskPool[minLengthQueue]) <= 0 || len(InsertionTaskPool[minLengthQueue]) < InsertionChannelLength {
+								if len(PersistPool[queue]) <= 0 || len(PersistPool[queue]) < PersistChannelLength {
 									break
 								}
 
@@ -146,9 +132,9 @@ func main() {
 
 							}
 
-							InsertionTaskPool[minLengthQueue] <- InsertionTask
+							PersistPool[queue] <- data
 
-							log.Print("selected ", len(data), " rows by selection task on queue ", q)
+							log.Print("fetching ", len(data), " rows on queue ", q, "...")
 
 						}
 
@@ -156,31 +142,31 @@ func main() {
 
 				}
 
-			}(concurrentSelect, q)
+			}(Selection, q)
 
 		}
 
 	}()
 
-	log.Print("waiting for insertion tasks...")
-
 	go func() {
 
-		for q, concurrentInsert := range InsertionTaskPool {
+		for q, concurrentInsert := range PersistPool {
 
-			go func(InsertionChannel chan gomulus.InsertionTask, q int) {
+			go func(PersistChannel chan [][]interface{}, q int) {
 
-				for InsertionTask := range InsertionChannel {
+				for data := range PersistChannel {
 
-					atomic.AddInt64(&PendingTasksCount, -1)
+					log.Print("fetched ", len(data), " rows on queue ", q, "...")
 
-					if n, err := DestinationInstance.ProcessTask(InsertionTask); err != nil {
+					atomic.AddInt64(&PendingJobsCount, -1)
 
-						log.Print("failed task on insertion queue ", q, "; lost ", n, " rows due to an error: ", err.Error())
+					if n, err := DestinationInstance.PersistData(data); err != nil {
+
+						log.Print("failed persist-job on queue ", q, "; lost ", n, ", an error occurred: ", err.Error())
 
 					} else {
 
-						log.Print("stored ", n, " rows by insertion task on queue ", q)
+						log.Print("persisted ", n, " rows on queue ", q)
 
 					}
 
@@ -200,7 +186,7 @@ func main() {
 
 	timeElapsed := 0
 	timeTimer := time.NewTimer(time.Second)
-	timeOut := int(config.Timeout/1000)
+	timeOut := int(config.Timeout / 1000)
 
 	go func() {
 		for {
@@ -210,7 +196,7 @@ func main() {
 				if timeOut > 0 && timeElapsed > timeOut {
 					log.Fatal(fmt.Sprintf("timed out after %d seconds", timeOut))
 				}
-				if atomic.LoadInt64(&PendingTasksCount) == 0 {
+				if atomic.LoadInt64(&PendingJobsCount) == 0 {
 					sigterm <- syscall.SIGINT
 				}
 				timeTimer.Reset(time.Second)
@@ -227,7 +213,6 @@ func main() {
 
 }
 
-// Start ...
 func Start(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugins gomulus.PluginsConfig) (gomulus.SourceInterface, gomulus.DestinationInterface, error) {
 
 	var err error
@@ -239,8 +224,6 @@ func Start(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugin
 
 	sourcePlugins = Plugins.Sources
 	destinationPlugins = Plugins.Destinations
-
-	log.Print("selecting source driver...")
 
 	found = false
 
@@ -282,8 +265,6 @@ func Start(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugin
 		return nil, nil, fmt.Errorf("no source driver found under the name `%s`", Source.Driver)
 
 	}
-
-	log.Print("selecting destination driver...")
 
 	found = false
 
@@ -329,51 +310,43 @@ func Start(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugin
 
 	}
 
-	log.Print("starting a new destination driver instance...")
+	log.Print(fmt.Sprintf("starting a new `%s` source driver instance...", Source.Driver))
 
-	err = destination.New(Destination)
-
-	if err != nil {
+	if err = source.New(Source.Options); err != nil {
 		return nil, nil, err
 	}
 
-	log.Print("starting a new source driver instance...")
+	log.Print(fmt.Sprintf("starting a new `%s` destination driver instance...", Destination.Driver))
 
-	if err = source.New(Source); err != nil {
+	if err = destination.New(Destination.Options); err != nil {
 		return nil, nil, err
 	}
 
-	log.Print("getting selection tasks...")
+	jobs, err := source.GetJobs()
 
-	SelectionTasks, err := source.GetTasks()
+	lengths := make(map[int]int, 0)
 
-	queuesLengths := make(map[int]int, 0)
-
-	for id, queue := range SelectionTaskPool {
-
-		queuesLengths[id] = len(queue)
-
+	for id, queue := range FetchPool {
+		lengths[id] = len(queue)
 	}
-
-	log.Print("spinning selection tasks...")
 
 	go func() {
 
-		for _, SelectionTask := range SelectionTasks {
+		for _, job := range jobs {
 
-			atomic.AddInt64(&PendingTasksCount, 1)
+			atomic.AddInt64(&PendingJobsCount, 1)
 
-			minLengthQueue := 0
+			queue := 0
 
-			queuesLengths := make(map[int]int, 0)
+			lengths := make(map[int]int, 0)
 
-			for id, queue := range SelectionTaskPool {
-				queuesLengths[id] = len(queue)
+			for id, queue := range FetchPool {
+				lengths[id] = len(queue)
 			}
 
-			minLengthQueue = GetShortestQueue(queuesLengths)
+			queue = GetShortestQueue(lengths)
 
-			SelectionTaskPool[minLengthQueue] <- SelectionTask
+			FetchPool[queue] <- job
 
 		}
 
@@ -383,21 +356,20 @@ func Start(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugin
 
 }
 
-// GetShortestQueue ...
 func GetShortestQueue(lengths map[int]int) int {
 
 	var minLength = math.MaxInt64
-	var minLengthQueue int
+	var queue int
 
-	if minLengthQueue == 0 {
+	if queue == 0 {
 		for id, length := range lengths {
 			if length < minLength {
-				minLengthQueue = id
+				queue = id
 				minLength = length
 			}
 		}
 	}
 
-	return minLengthQueue
+	return queue
 
 }

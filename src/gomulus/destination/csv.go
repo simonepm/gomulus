@@ -2,66 +2,53 @@ package gomulus
 
 import (
 	"encoding/csv"
-	"fmt"
 	"github.com/gofrs/flock"
 	"gomulus"
 	"os"
 	"path/filepath"
-
 )
 
-// DefaultCSVDestination ...
 type DefaultCSVDestination struct {
 	Config gomulus.DriverConfig
 	Flock  *flock.Flock
 	File   *os.File
 }
 
-// New ...
-func (d *DefaultCSVDestination) New(config gomulus.DriverConfig) error {
+func (d *DefaultCSVDestination) New(config map[string]interface{}) error {
 
 	var err error
 	var file *os.File
-	var endpoint, _ = config.Options["endpoint"].(string)
-	var truncate, _ = config.Options["truncate"].(bool)
+	var path, _ = config["path"].(string)
+	var truncate, _ = config["truncate"].(bool)
 
-	if endpoint, err = filepath.Abs(endpoint); err != nil {
+	if path, err = filepath.Abs(path); err != nil {
 		return err
 	}
 
-	fileLock := flock.New(endpoint)
-
 	if truncate {
-		fmt.Fprintln(os.Stdout, "truncating path", endpoint, "...")
-		if file, err = os.OpenFile(endpoint, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0666); err != nil {
+		if file, err = os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0666); err != nil {
 			return err
 		}
 	} else {
-		if file, err = os.OpenFile(endpoint, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0666); err != nil {
+		if file, err = os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0666); err != nil {
 			return err
 		}
 	}
 
-	d.Flock = fileLock
-
+	d.Flock = flock.New(path)
 	d.File = file
 
 	return nil
 
 }
 
-// GetTask ...
-func (d *DefaultCSVDestination) GetTask(data [][]interface{}) (gomulus.InsertionTask, error) {
+func (d *DefaultCSVDestination) PreProcessData(data [][]interface{}) ([][]interface{}, error) {
 
-	return gomulus.InsertionTask{
-		Meta: map[string]interface{}{},
-		Data: data,
-	}, nil
+	return data, nil
 
 }
 
-// ProcessTask ...
-func (d *DefaultCSVDestination) ProcessTask(InsertionTask gomulus.InsertionTask) (int, error) {
+func (d *DefaultCSVDestination) PersistData(data [][]interface{}) (int, error) {
 
 	locked, _ := d.Flock.TryLock()
 
@@ -69,7 +56,7 @@ func (d *DefaultCSVDestination) ProcessTask(InsertionTask gomulus.InsertionTask)
 
 	wr := csv.NewWriter(file)
 
-	for _, row := range InsertionTask.Data {
+	for _, row := range data {
 
 		values := make([]string, 0)
 
@@ -81,7 +68,7 @@ func (d *DefaultCSVDestination) ProcessTask(InsertionTask gomulus.InsertionTask)
 		err := wr.Write(values)
 
 		if err != nil {
-			return len(InsertionTask.Data), err
+			return len(data), err
 		}
 
 	}
@@ -89,13 +76,13 @@ func (d *DefaultCSVDestination) ProcessTask(InsertionTask gomulus.InsertionTask)
 	wr.Flush()
 
 	if locked {
-		d.Flock.Unlock()
+		_ = d.Flock.Unlock()
 	}
 
 	if wr.Error() != nil {
-		return len(InsertionTask.Data), wr.Error()
+		return len(data), wr.Error()
 	}
 
-	return len(InsertionTask.Data), nil
+	return len(data), nil
 
 }
