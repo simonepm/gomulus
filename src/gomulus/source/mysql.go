@@ -27,11 +27,15 @@ func (s *DefaultMysqlSource) New(config gomulus.DriverConfig) error {
 	var count, _ = config.Options["count"].(float64)
 	var offset, _ = config.Options["offset"].(float64)
 	var endpoint, _ = config.Options["endpoint"].(string)
-	var table = config.Options["table"].(string)
-	var limit = config.Options["limit"].(float64)
-	var columns = config.Options["columns"].(string)
+	var table, _ = config.Options["table"].(string)
+	var limit, _ = config.Options["limit"].(float64)
+	var columns, _ = config.Options["columns"].(string)
 	var tables = make([]string, 0)
 	var rows *sql.Rows
+
+	if columns == "" {
+		columns = "*"
+	}
 
 	if db, err = sql.Open("mysql", endpoint); err != nil {
 		return err

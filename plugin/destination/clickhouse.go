@@ -5,7 +5,6 @@ import (
 	"fmt"
 	_ "github.com/kshvakov/clickhouse"
 	"gomulus"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -31,6 +30,7 @@ func (d *clickhouseDestination) New(config gomulus.DriverConfig) error {
 	var database, _ = config.Options["database"].(string)
 	var endpoint, _ = config.Options["endpoint"].(string) // tcp://%s:%d?username=%s&password=%s&database=%s&read_timeout=%d&write_timeout=%d
 	var table, _ = config.Options["table"].(string)
+	var create, _ = config.Options["create"].(bool)
 	var ddl, _ = config.Options["ddl"].(map[string]interface{})
 	var columns, _ = ddl["columns"].([]interface{})
 	var engine, _ = ddl["engine"].(string)
@@ -41,8 +41,10 @@ func (d *clickhouseDestination) New(config gomulus.DriverConfig) error {
 		return err
 	}
 
-	if err = create(db, database, table, columns, engine); err != nil {
-		return err
+	if create {
+		if err = createTable(db, database, table, columns, engine); err != nil {
+			return err
+		}
 	}
 
 	if rows, err = db.Query("SHOW TABLES"); err != nil {
@@ -63,8 +65,6 @@ func (d *clickhouseDestination) New(config gomulus.DriverConfig) error {
 	}
 
 	if truncate {
-
-		_, _ = fmt.Fprintln(os.Stdout, "truncating table", table, "...")
 
 		var q string
 
@@ -252,7 +252,7 @@ func (d *clickhouseDestination) ProcessTask(InsertionTask gomulus.InsertionTask)
 
 }
 
-func create(con *sql.DB, database string, table string, columns []interface{}, engine string) error {
+func createTable(con *sql.DB, database string, table string, columns []interface{}, engine string) error {
 
 	var err error
 

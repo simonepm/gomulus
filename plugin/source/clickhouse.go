@@ -14,9 +14,11 @@ var ClickhouseSource clickhouseSource
 type clickhouseSource struct {
 	Config gomulus.DriverConfig
 	DB     *sql.DB
-	Limit  int
-	Count  int
-	Table  string
+	Limit   int
+	Count   int
+	Offset  int
+	Table   string
+	Columns string
 }
 
 // New ...
@@ -24,20 +26,24 @@ func (s *clickhouseSource) New(config gomulus.DriverConfig) error {
 
 	var err error
 	var db *sql.DB
-	var count = 0
-	var limit = config.Options["limit"].(float64)
-	var table = config.Options["table"].(string)
-	var endpoint, _ = config.Options["endpoint"].(string) // tcp://%s:%d?username=%s&password=%s&database=%s&read_timeout=%d&write_timeout=%d
-	var rowLimit = int(math.Max(1, limit))
+	var count, _ = config.Options["count"].(float64)
+	var offset, _ = config.Options["offset"].(float64)
+	var endpoint, _ = config.Options["endpoint"].(string)
+	var table, _ = config.Options["table"].(string)
+	var limit, _ = config.Options["limit"].(float64)
+	var columns, _ = config.Options["columns"].(string)
+	var tables = make([]string, 0)
+	var rows *sql.Rows
+
+	if columns == "" {
+		columns = "*"
+	}
 
 	if db, err = sql.Open("clickhouse", endpoint); err != nil {
 		return err
 	}
 
 	s.DB = db
-
-	var tables = make([]string, 0)
-	var rows *sql.Rows
 
 	if rows, err = db.Query("SHOW TABLES"); err != nil {
 		return err
@@ -58,12 +64,16 @@ func (s *clickhouseSource) New(config gomulus.DriverConfig) error {
 
 	s.Table = table
 
-	if err = db.QueryRow(fmt.Sprintf("SELECT COUNT(0) FROM %s", table)).Scan(&count); err != nil {
-		return err
+	if count == 0 {
+		if err = db.QueryRow(fmt.Sprintf("SELECT COUNT(0) FROM %s", table)).Scan(&count); err != nil {
+			return err
+		}
 	}
 
-	s.Count = count
-	s.Limit = rowLimit
+	s.Count = int(math.Max(1, count))
+	s.Limit = int(math.Max(1, limit))
+	s.Offset = int(math.Max(0, offset))
+	s.Columns = columns
 
 	return nil
 
@@ -72,7 +82,7 @@ func (s *clickhouseSource) New(config gomulus.DriverConfig) error {
 // GetTasks ...
 func (s *clickhouseSource) GetTasks() ([]gomulus.SelectionTask, error) {
 
-	offset := 0
+	offset := s.Offset
 	tasks := make([]gomulus.SelectionTask, 0)
 
 	for true {
@@ -81,7 +91,7 @@ func (s *clickhouseSource) GetTasks() ([]gomulus.SelectionTask, error) {
 			break
 		}
 
-		query := fmt.Sprintf("SELECT * FROM %s LIMIT %d, %d", s.Table, offset, s.Limit)
+		query := fmt.Sprintf("SELECT %s FROM %s LIMIT %d, %d", s.Columns, s.Table, offset, s.Limit)
 
 		offset += s.Limit
 
