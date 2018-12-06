@@ -36,25 +36,28 @@ A driver requires some kind of configuration to run on your data endpoint; the `
 
     {
       "source": {
-        "driver": "mysql",
         "pool": 4,
+        "driver": "mysql",
         "options": {
-          "limit":    1000,
-          "endpoint": "user:pass@tcp(host:port)/db",
-          "table":    "tb"
+          "offset":   0,
+          "limit":    10000,
+          "endpoint": "user:pass@tcp(host:port)",
+          "database": "database",
+          "table":    "table",
+          "columns":  "*"
         }
       },
       "destination": {
-        "driver": "csv",
         "pool": 1,
+        "driver": "csv",
         "options": {
-          "endpoint": "./data/csv/path/name.csv",
+          "path": "./data/csv/path/name.csv",
           "truncate": true
         }
       }
     }
 
-In the basic example above, GOmulus will select 1000 rows per routine (4 in total) and will persist the selected data on a CSV file, truncated beforehand, or created if it doesn't exists already.
+In the basic example above, GOmulus will select 10000 rows per routine (4 in total) and will persist the selected data on a CSV file, truncated beforehand, or created if it doesn't exists already.
 
 ## Custom sources and destinations
 
@@ -64,39 +67,28 @@ But you can extend GOmulus by adding any custom data source or destination as fo
 
 ### TL;DR
 
-In the `./plugin` directory in the root of this repository you can find ready-made examples of a source and a destination custom drivers. Build and import them by using the `go build -buildmode=plugin` command and following the __"Configuration example with a custom destination driver"__ section.
+In the `./plugin` directory in the root of this repository you can find ready-made examples of a source and a destination custom drivers.
+
+Build and import them by using the `go build -buildmode=plugin` command and following the __"Configuration example with a custom destination driver"__ section.
 
 ### Extend the default source interface
 
 Develop your custom source driver by extending the default source GO interface:
 
     type SourceInterface interface {
-        New(DriverConfig) error
-        GetTasks() ([]SelectionTask, error)
-        ProcessTask(SelectionTask) ([][]interface{}, error)
-    }
-
-The `New(DriverConfig) error` method of your driver should expect a `DriverConfig` GO structure:
-
-    type DriverConfig struct {
-      Driver  string                 `json:"driver"`
-      Pool    int                    `json:"pool,omitempty"`
-      Options map[string]interface{} `json:"options,omitempty"`
+        New(map[string]interface{}) error
+        GetJobs() ([]map[string]interface{}, error)
+        FetchData(map[string]interface{}) ([][]interface{}, error)
     }
     
-So you can easily access the `DriverConfig.Options` parameter, parsed from the JSON configuration of your driver.
+On GOmulus startup the source option parameter of the JSON config file is passed as `map[string]interface{}` to `New(map[string]interface{})` of your custom source driver.
 
-The `GetTasks() ([]SelectionTask, error)` method should return a slice of selection operations in the form of `[]SelectionTask`
+`GetJobs()` of your custom source driver should return a slice of jobs.
 
-    type SelectionTask struct {
-      Meta map[string]interface{}
-    }
+Each job should be in the form of `map[string]interface{}` containing the meta info needed by `FetchData(map[string]interface{})` method of your custom source driver to actually perform the fetch operation.
 
-
-`ProcessTask(SelectionTask) ([][]interface{}, error)` is the method that should effectively perform the selection operation by following the info contained in the `SelectionTask.Meta` parameter passed to it and returning the selected data in the form of `[][]interface{}`.
-
-__ATTENTION:__
-Selected data will be passed by GOmulus to the `GetTask([][]interface{}) (InsertionTask, error)` method of the destination driver and persited by `ProcessTask(InsertionTask) (int, error)` method thereof.
+`FetchData(map[string]interface{})` of your custom source driver should return the fetched data as `[][]interface{}`.
+Data will be passed by GOmuus to the `PreProcessData([][]interface{})` method of the designated destination driver instance for further processing.
 
 #### Build your custom source driver
     
@@ -104,36 +96,20 @@ Selected data will be passed by GOmulus to the `GetTask([][]interface{}) (Insert
     
 ### Extend the default destination interface
 
-Develop your custom destination driver by extending the destination GO interface provided:
+Develop your custom destination driver by extending the destination GO interface:
 
     type DestinationInterface interface {
-        New(DriverConfig) error
-        GetTask([][]interface{}) (InsertionTask, error)
-        ProcessTask(InsertionTask) (int, error)
+        New(map[string]interface{}) error
+        PreProcessData([][]interface{}) ([][]interface{}, error)
+        PersistData([][]interface{}) (int, error)
     }
     
-The `New(DriverConfig) error` method of your driver should expect a `DriverConfig` GO structure:
+On GOmulus startup the destination option parameter of the JSON config file is passed as `map[string]interface{}` to `New(map[string]interface{})` of your custom destination driver.
 
-    type DriverConfig struct {
-      Driver  string                 `json:"driver"`
-      Pool    int                    `json:"pool,omitempty"`
-      Options map[string]interface{} `json:"options,omitempty"`
-    }
+`PreProcessData([][]interface{})` of your custom destination driver optionally preprocess data passed as argument from the source driver instance and then should return it in the same format (`[][]interface{}`).
+
+`PersistData([][]interface{})` of your custom destination driver should actually persist data passed to it as argument by GOmulus and then return the number of persisted rows as integer.
     
-So you can easily access the `DriverConfig.Options` parameter, parsed from the JSON configuration of your driver.
-
-The `GetTask([][]interface{}) (InsertionTask, error)` method should return an insertion operation in the form of an `InsertionTask` in which `Meta` is a `map[string]interface{}` containing optional custom info to help the `ProcessTask(InsertionTask) (int, error)` method to perform the subsequent insertion operation.
-
-    type InsertionTask struct {
-      Meta map[string]interface{}
-      Data [][]interface{}
-    }
-
-__ATTENTION:__
-`GetTask([][]interface{}) (InsertionTask, error)` gets the selected data from the source as argument in the form of `[][]interface{}` and should return it inside the `InsertionTask.Data` parameter. The purpose of having it in this early step is only if you need it to populate the `InsertionTask.Meta` parameter accordinto the data or if you want manipulate the date itself, before the insertion.
-
-`ProcessTask(InsertionTask) (int, error)` is the method that should effectively perform the insertion operation of the content of `InsertionTask.Data` parameter; optionally using the info inside the `InsertionTask.Meta` parameter as helper.
-
 #### Build your custom destination driver
     
     # go build -buildmode=plugin -o ./path/name.so ./path/name.go
@@ -154,13 +130,16 @@ __ATTENTION:__
         "pool": 4,
         "driver": "mysql",
         "options": {
-          "limit":    1000,
-          "endpoint": "user:pass@tcp(host:port)/db",
-          "table":    "tb"
+          "offset":   0,
+          "limit":    10000,
+          "endpoint": "user:pass@tcp(host:port)",
+          "database": "database",
+          "table":    "table",
+          "columns":  "*"
         }
       },
       "destination": {
-        "pool": 1,
+        "pool": 4,
         "driver": "ExportedPluginDriverVariable",
         "options": {
           "custom_option_a": "a",

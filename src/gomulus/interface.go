@@ -1,26 +1,13 @@
 package gomulus
 
-// SourceInterface ...
 type SourceInterface interface {
-	New(DriverConfig) error
-	GetTasks() ([]SelectionTask, error)
-	ProcessTask(SelectionTask) ([][]interface{}, error)
+	New(map[string]interface{}) error
+	GetJobs() ([]map[string]interface{}, error)
+	FetchData(map[string]interface{}) ([][]interface{}, error)
 }
 
-// DestinationInterface ...
 type DestinationInterface interface {
-	New(DriverConfig) error
-	GetTask([][]interface{}) (InsertionTask, error)
-	ProcessTask(InsertionTask) (int, error)
-}
-
-// SelectionTask ...
-type SelectionTask struct {
-	Meta map[string]interface{}
-}
-
-// InsertionTask ...
-type InsertionTask struct {
-	Meta map[string]interface{}
-	Data [][]interface{}
+	New(map[string]interface{}) error
+	PreProcessData([][]interface{}) ([][]interface{}, error)
+	PersistData([][]interface{}) (int, error)
 }

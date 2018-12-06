@@ -2,13 +2,14 @@ package gomulus
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	_ "github.com/go-sql-driver/mysql"
 	"gomulus"
+	"regexp"
 	"strings"
 )
 
-// DefaultMysqlDestination ...
 type DefaultMysqlDestination struct {
 	Config   gomulus.DriverConfig
 	DB       *sql.DB
@@ -16,17 +17,24 @@ type DefaultMysqlDestination struct {
 	Table    string
 }
 
-// New ...
-func (d *DefaultMysqlDestination) New(config gomulus.DriverConfig) error {
+func (d *DefaultMysqlDestination) New(config map[string]interface{}) error {
 
 	var err error
 	var db *sql.DB
-	var truncate, _ = config.Options["truncate"].(bool)
-	var database, _ = config.Options["database"].(string)
-	var endpoint, _ = config.Options["endpoint"].(string)
-	var table, _ = config.Options["table"].(string)
+	var truncate, _ = config["truncate"].(bool)
+	var database, _ = config["database"].(string)
+	var endpoint, _ = config["endpoint"].(string)
+	var table, _ = config["table"].(string)
 	var tables = make([]string, 0)
 	var rows *sql.Rows
+
+	if ok, _ := regexp.MatchString(`^[\p{L}_][\p{L}\p{N}@$#_]{0,127}$`, database); !ok {
+		return errors.New(fmt.Sprintf("invalid database name `%s`", database))
+	}
+
+	if ok, _ := regexp.MatchString(`^[\p{L}_][\p{L}\p{N}@$#_]{0,127}$`, table); !ok {
+		return errors.New(fmt.Sprintf("invalid table name `%s`", table))
+	}
 
 	if db, err = sql.Open("mysql", endpoint); err != nil {
 		return err
@@ -65,23 +73,18 @@ func (d *DefaultMysqlDestination) New(config gomulus.DriverConfig) error {
 
 }
 
-// GetTask ...
-func (d *DefaultMysqlDestination) GetTask(data [][]interface{}) (gomulus.InsertionTask, error) {
+func (d *DefaultMysqlDestination) PreProcessData(data [][]interface{}) ([][]interface{}, error) {
 
-	return gomulus.InsertionTask{
-		Meta: map[string]interface{}{},
-		Data: data,
-	}, nil
+	return data, nil
 
 }
 
-// ProcessTask ...
-func (d *DefaultMysqlDestination) ProcessTask(InsertionTask gomulus.InsertionTask) (int, error) {
+func (d *DefaultMysqlDestination) PersistData(data [][]interface{}) (int, error) {
 
 	db := d.DB
 
 	marks := ""
-	for _, row := range InsertionTask.Data {
+	for _, row := range data {
 		for range row {
 			marks += "?,"
 		}
@@ -97,24 +100,24 @@ func (d *DefaultMysqlDestination) ProcessTask(InsertionTask gomulus.InsertionTas
 	stmt, err := tx.Prepare(query)
 
 	if err != nil {
-		return len(InsertionTask.Data), err
+		return len(data), err
 	}
 
 	defer stmt.Close()
 
-	for _, row := range InsertionTask.Data {
+	for _, row := range data {
 
 		if _, err = stmt.Exec(row...); err != nil {
-			return len(InsertionTask.Data), err
+			return len(data), err
 		}
 
 	}
 
 	if err := tx.Commit(); err != nil {
-		return len(InsertionTask.Data), err
+		return len(data), err
 	}
 
-	return len(InsertionTask.Data), err
+	return len(data), err
 
 }
 

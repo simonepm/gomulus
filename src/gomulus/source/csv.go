@@ -7,10 +7,10 @@ import (
 	"io"
 	"math"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
-// DefaultCSVSource ...
 type DefaultCSVSource struct {
 	Config gomulus.DriverConfig
 	File   *os.File
@@ -20,43 +20,44 @@ type DefaultCSVSource struct {
 	Strip  bool
 }
 
-// New ...
-func (s *DefaultCSVSource) New(config gomulus.DriverConfig) error {
+func (s *DefaultCSVSource) New(config map[string]interface{}) error {
 
 	var err error
 	var file *os.File
-	var limit, _ = config.Options["limit"].(float64)
-	var endpoint, _ = config.Options["endpoint"].(string)
-	var eof, _ = config.Options["line_separator"].(string)
-	var strip, _ = config.Options["strip_header"].(bool)
-	var rowLimit = int(math.Max(1, limit))
+	var eof, _ = config["line_separator"].(string)
+	var limit, _ = config["limit"].(float64)
+	var path, _ = config["path"].(string)
+	var strip, _ = config["strip_header"].(bool)
 
 	if eof == "" {
 		eof = "\n"
 	}
 
-	if file, err = os.Open(endpoint); err != nil {
+	if path, err = filepath.Abs(path); err != nil {
 		return err
 	}
 
-	s.File = file
-	s.Path = endpoint
-	s.Limit = rowLimit
+	if file, err = os.Open(path); err != nil {
+		return err
+	}
+
 	s.EOF = eof
+	s.File = file
+	s.Path = path
+	s.Limit = int(math.Max(1, limit))
 	s.Strip = strip
 
 	return nil
 
 }
 
-// GetTasks ...
-func (s *DefaultCSVSource) GetTasks() ([]gomulus.SelectionTask, error) {
+func (s *DefaultCSVSource) GetJobs() ([]map[string]interface{}, error) {
 
 	var count int
 	var offset int
 	var bytes int
 
-	tasks := make([]gomulus.SelectionTask, 0)
+	jobs := make([]map[string]interface{}, 0)
 	lines := make(map[int]int, 0)
 
 	scanner := bufio.NewScanner(s.File)
@@ -99,27 +100,24 @@ func (s *DefaultCSVSource) GetTasks() ([]gomulus.SelectionTask, error) {
 
 		offset = offset + s.Limit
 
-		tasks = append(tasks, gomulus.SelectionTask{
-			Meta: map[string]interface{}{
-				"from": from,
-				"to":   to,
-			},
+		jobs = append(jobs, map[string]interface{}{
+			"from": from,
+			"to":   to,
 		})
 
 	}
 
-	return tasks, nil
+	return jobs, nil
 
 }
 
-// ProcessTask ...
-func (s *DefaultCSVSource) ProcessTask(SelectionTask gomulus.SelectionTask) ([][]interface{}, error) {
+func (s *DefaultCSVSource) FetchData(job map[string]interface{}) ([][]interface{}, error) {
 
 	var err error
 	var data [][]interface{}
 	var file *os.File
-	var from, _ = SelectionTask.Meta["from"].(int)
-	var to, _ = SelectionTask.Meta["to"].(int)
+	var from, _ = job["from"].(int)
+	var to, _ = job["to"].(int)
 
 	if false {
 

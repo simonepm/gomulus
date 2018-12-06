@@ -2,15 +2,16 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	_ "github.com/kshvakov/clickhouse"
 	"gomulus"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
 
-// ClickhouseDestination ...
 var ClickhouseDestination clickhouseDestination
 
 type clickhouseDestination struct {
@@ -21,21 +22,28 @@ type clickhouseDestination struct {
 	Columns  []interface{}
 }
 
-// New ...
-func (d *clickhouseDestination) New(config gomulus.DriverConfig) error {
+func (d *clickhouseDestination) New(config map[string]interface{}) error {
 
 	var err error
 	var db *sql.DB
-	var truncate, _ = config.Options["truncate"].(bool)
-	var database, _ = config.Options["database"].(string)
-	var endpoint, _ = config.Options["endpoint"].(string) // tcp://%s:%d?username=%s&password=%s&database=%s&read_timeout=%d&write_timeout=%d
-	var table, _ = config.Options["table"].(string)
-	var create, _ = config.Options["create"].(bool)
-	var ddl, _ = config.Options["ddl"].(map[string]interface{})
+	var truncate, _ = config["truncate"].(bool)
+	var database, _ = config["database"].(string)
+	var endpoint, _ = config["endpoint"].(string)
+	var table, _ = config["table"].(string)
+	var create, _ = config["create"].(bool)
+	var ddl, _ = config["ddl"].(map[string]interface{})
 	var columns, _ = ddl["columns"].([]interface{})
 	var engine, _ = ddl["engine"].(string)
 	var tables = make([]string, 0)
 	var rows *sql.Rows
+
+	if ok, _ := regexp.MatchString(`^[\p{L}_][\p{L}\p{N}@$#_]{0,127}$`, database); !ok {
+		return errors.New(fmt.Sprintf("invalid database name `%s`", database))
+	}
+
+	if ok, _ := regexp.MatchString(`^[\p{L}_][\p{L}\p{N}@$#_]{0,127}$`, table); !ok {
+		return errors.New(fmt.Sprintf("invalid table name `%s`", table))
+	}
 
 	if db, err = sql.Open("clickhouse", endpoint); err != nil {
 		return err
@@ -95,23 +103,18 @@ func (d *clickhouseDestination) New(config gomulus.DriverConfig) error {
 
 }
 
-// GetTask ...
-func (d *clickhouseDestination) GetTask(data [][]interface{}) (gomulus.InsertionTask, error) {
+func (d *clickhouseDestination) PreProcessData(data [][]interface{}) ([][]interface{}, error) {
 
-	return gomulus.InsertionTask{
-		Meta: map[string]interface{}{},
-		Data: data,
-	}, nil
+	return data, nil
 
 }
 
-// ProcessTask ...
-func (d *clickhouseDestination) ProcessTask(InsertionTask gomulus.InsertionTask) (int, error) {
+func (d *clickhouseDestination) PersistData(data [][]interface{}) (int, error) {
 
 	db := d.DB
 
 	marks := ""
-	for _, row := range InsertionTask.Data {
+	for _, row := range data {
 		for range row {
 			marks += "?,"
 		}
@@ -127,12 +130,12 @@ func (d *clickhouseDestination) ProcessTask(InsertionTask gomulus.InsertionTask)
 	stmt, err := tx.Prepare(query)
 
 	if err != nil {
-		return len(InsertionTask.Data), err
+		return len(data), err
 	}
 
 	defer stmt.Close()
 
-	for _, row := range InsertionTask.Data {
+	for _, row := range data {
 
 		parsedRow := make([]interface{}, 0, len(row))
 
@@ -240,15 +243,15 @@ func (d *clickhouseDestination) ProcessTask(InsertionTask gomulus.InsertionTask)
 		}
 
 		if _, err = stmt.Exec(parsedRow...); err != nil {
-			return len(InsertionTask.Data), err
+			return len(data), err
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return len(InsertionTask.Data), err
+		return len(data), err
 	}
 
-	return len(InsertionTask.Data), err
+	return len(data), err
 
 }
 
@@ -256,13 +259,9 @@ func createTable(con *sql.DB, database string, table string, columns []interface
 
 	var err error
 
-	// TODO validate database name
-
 	if _, err = con.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`;", database)); err != nil {
 		return err
 	}
-
-	// TODO validate table name
 
 	query := fmt.Sprintf("CREATE TABLE IF NOT EXISTS `%s`.`%s` (", database, table)
 
