@@ -11,7 +11,6 @@ import (
 // ClickhouseSource ...
 var ClickhouseSource clickhouseSource
 
-// clickhouseSource ...
 type clickhouseSource struct {
 	Config gomulus.DriverConfig
 	DB     *sql.DB
@@ -53,7 +52,7 @@ func (s *clickhouseSource) New(config gomulus.DriverConfig) error {
 		tables = append(tables, t)
 	}
 
-	if !InSliceString(table, tables) {
+	if !inSlice(table, tables) {
 		return fmt.Errorf("table not found `%s`", table)
 	}
 
@@ -148,8 +147,7 @@ func Select(db *sql.DB, query string) ([][]interface{}, error) {
 
 }
 
-// InSliceString ...
-func InSliceString(a string, list []string) bool {
+func inSlice(a string, list []string) bool {
 
 	for _, b := range list {
 		if b == a {

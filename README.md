@@ -130,7 +130,7 @@ The `GetTask([][]interface{}) (InsertionTask, error)` method should return an in
     }
 
 __ATTENTION:__
-`GetTask([][]interface{}) (InsertionTask, error)` gets the selected data from the source as argument in the form of `[][]interface{}` and should return it AS IS inside the `InsertionTask.Data` parameter. The purpose of having it in this early step is only if you need it to populate the `InsertionTask.Meta` parameter accordingly.
+`GetTask([][]interface{}) (InsertionTask, error)` gets the selected data from the source as argument in the form of `[][]interface{}` and should return it inside the `InsertionTask.Data` parameter. The purpose of having it in this early step is only if you need it to populate the `InsertionTask.Meta` parameter accordinto the data or if you want manipulate the date itself, before the insertion.
 
 `ProcessTask(InsertionTask) (int, error)` is the method that should effectively perform the insertion operation of the content of `InsertionTask.Data` parameter; optionally using the info inside the `InsertionTask.Meta` parameter as helper.
 

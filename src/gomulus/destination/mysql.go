@@ -3,9 +3,10 @@ package gomulus
 import (
 	"database/sql"
 	"fmt"
-	"os"
 	"gomulus"
+	"os"
 	"strings"
+	_ "github.com/go-sql-driver/mysql"
 )
 
 // DefaultMysqlDestination ...
@@ -23,13 +24,12 @@ func (d *DefaultMysqlDestination) New(config gomulus.DriverConfig) error {
 	var truncate, _ = config.Options["truncate"].(bool)
 	var endpoint, _ = config.Options["endpoint"].(string)
 	var table, _ = config.Options["table"].(string)
+	var tables = make([]string, 0)
+	var rows *sql.Rows
 
 	if db, err = sql.Open("mysql", endpoint); err != nil {
 		return err
 	}
-
-	var tables = make([]string, 0)
-	var rows *sql.Rows
 
 	if rows, err = db.Query("SHOW TABLES"); err != nil {
 		return err
