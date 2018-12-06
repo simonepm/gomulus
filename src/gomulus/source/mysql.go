@@ -14,6 +14,7 @@ type DefaultMysqlSource struct {
 	DB      *sql.DB
 	Limit   int
 	Count   int
+	Offset  int
 	Table   string
 	Columns string
 }
@@ -24,6 +25,7 @@ func (s *DefaultMysqlSource) New(config gomulus.DriverConfig) error {
 	var err error
 	var db *sql.DB
 	var count, _ = config.Options["count"].(float64)
+	var offset, _ = config.Options["offset"].(float64)
 	var endpoint, _ = config.Options["endpoint"].(string)
 	var table = config.Options["table"].(string)
 	var limit = config.Options["limit"].(float64)
@@ -62,8 +64,9 @@ func (s *DefaultMysqlSource) New(config gomulus.DriverConfig) error {
 		}
 	}
 
-	s.Count = int(count)
+	s.Count = int(math.Max(1, count))
 	s.Limit = int(math.Max(1, limit))
+	s.Offset = int(math.Max(0, offset))
 	s.Columns = columns
 
 	return nil
@@ -73,7 +76,7 @@ func (s *DefaultMysqlSource) New(config gomulus.DriverConfig) error {
 // GetTasks ...
 func (s *DefaultMysqlSource) GetTasks() ([]gomulus.SelectionTask, error) {
 
-	offset := 0
+	offset := s.Offset
 	tasks := make([]gomulus.SelectionTask, 0)
 
 	for true {
