@@ -78,9 +78,10 @@ In the example above, GOmulus will select 1000 rows per routine (4000 in total) 
         "driver":   "csv",
         "options": {
           "path":       "<filepath>",
-          "column_sep": ",",
           "line_sep":   "\n",
-          "lines":      1000
+          "column_sep": ",",
+          "offset":     1,
+          "limit":      1000
         }
       },
       "destination": {
@@ -95,7 +96,7 @@ In the example above, GOmulus will select 1000 rows per routine (4000 in total) 
       }
     }
 
-In the example above, GOmulus will select 1000 lines per batch from a CSV file and will persist the selected data on a MySQL table, truncated beforehand, or created if it doesn't exists.
+In the example above, GOmulus will select 1000 lines per batch from a CSV file, skipping the first line, and will persist the selected data on a MySQL table, truncated beforehand.
 
 ## Custom source and destination drivers
 
@@ -113,7 +114,7 @@ Develop your custom source driver by extending the default SourceInterface:
 type SourceInterface interface {
     New(map[string]interface{}) error
     GetJobs() ([]map[string]interface{}, error)
-    GetData(map[string]interface{}) ([][]interface{}, error)
+    FetchData(map[string]interface{}) ([][]interface{}, error)
 }
 ```
 
@@ -121,10 +122,10 @@ type SourceInterface interface {
 Here you can initialize your driver and return an error in case something goes wrong with the configuration options provided.
 
 `GetJobs` method should return a list of __jobs__ in the form of `[]map[string]interface{}`.
-Every job will be passed to `GetData` method next.
+Every job will be passed to `FetchData` method next.
 
-`GetData` is the method that should effectively perform the selection operation by following the info contained in the __job__  (`map[string]interface{}`) passed as argument.
-`GetData` method should return __data__ as `[][]interface{}`: a slice of rows containing a slice of columns.
+`FetchData` is the method that should effectively perform the selection operation by following the info contained in the __job__  (`map[string]interface{}`) passed as argument.
+`FetchData` method should return __data__ as `[][]interface{}`: a slice of rows containing a slice of columns.
     
 ### Extend the default driver DestinationInterface
 
@@ -140,7 +141,7 @@ type DestinationInterface interface {
 
 `New` method of your driver should expect a `map[string]interface{}` as argument, corresponding to the destination `options` object in your JSON configuration file. Here you can initialize your driver and return an error in case something goes wrong with the configuration options provided.
 
-`PreProcessData` receives the __data__ (`[][]interface{}`) returned from the source driver `GetData` method as argument, allowing you to optionally modify its content before actually persisting it with the `PersistData` method.
+`PreProcessData` receives the __data__ (`[][]interface{}`) returned from the source driver `FetchData` method as argument, allowing you to optionally modify its content before actually persisting it with the `PersistData` method.
 
 `PersistData` is the method that should effectively perform the insertion operation of __data__ (`[][]interface{}`) passed as argument. It should return the number of rows persisted in case of success alongside eventual errors occurred.
 

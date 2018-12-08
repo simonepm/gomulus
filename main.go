@@ -98,7 +98,7 @@ func main() {
 
 						atomic.AddInt64(&PendingJobsCount, -1)
 
-						log.Print("failed fetch-job on queue ", q, "; an error occurred: ", err.Error())
+						log.Print("failed data fetching on queue ", q, "; an error occurred: ", err.Error())
 
 					} else {
 
@@ -108,7 +108,7 @@ func main() {
 
 							atomic.AddInt64(&PendingJobsCount, -1)
 
-							log.Print("failed pre-processing on queue ", q, "; an error occurred: ", err.Error())
+							log.Print("failed data pre-processing on queue ", q, "; an error occurred: ", err.Error())
 
 						} else {
 
@@ -162,7 +162,7 @@ func main() {
 
 					if n, err := DestinationInstance.PersistData(data); err != nil {
 
-						log.Print("failed persist-job on queue ", q, "; lost ", n, ", an error occurred: ", err.Error())
+						log.Print("failed data persist on queue ", q, "; lost ", n, ", an error occurred: ", err.Error())
 
 					} else {
 
@@ -213,100 +213,98 @@ func main() {
 
 }
 
-func Start(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugins gomulus.PluginsConfig) (gomulus.SourceInterface, gomulus.DestinationInterface, error) {
+func Start(Source gomulus.DriverConfig, Destination gomulus.DriverConfig) (gomulus.SourceInterface, gomulus.DestinationInterface, error) {
 
 	var err error
 	var found bool
 	var source gomulus.SourceInterface
 	var destination gomulus.DestinationInterface
-	var sourcePlugins []gomulus.PluginConfig
-	var destinationPlugins []gomulus.PluginConfig
 
-	sourcePlugins = Plugins.Sources
-	destinationPlugins = Plugins.Destinations
-
+	err = nil
 	found = false
 
 	switch Source.Driver {
 
 	case "csv":
 
-		found = true
 		source = &sources.DefaultCSVSource{}
+		found = true
 
 	case "mysql":
 
-		found = true
 		source = &sources.DefaultMysqlSource{}
+		found = true
 
 	default:
 
-		for _, pc := range sourcePlugins {
-			if Source.Driver == pc.Name {
-				found = true
-				pc.Path, err = filepath.Abs(pc.Path)
-				if err != nil {
-					log.Fatal(err.Error())
-				}
-				plug, err := plugin.Open(pc.Path)
-				if err != nil {
-					log.Fatal(err.Error())
-				}
-				symbol, err := plug.Lookup(pc.Name)
-				source, _ = symbol.(gomulus.SourceInterface)
-				break
-			}
+		pluginPath, err = filepath.Abs(Source.Plugin)
+		if err != nil {
+			break
 		}
+		plug, err := plugin.Open(plugin.Path)
+		if err != nil {
+			break
+		}
+		symbol, err := plug.Lookup(pc.Name)
+		if err != nil {
+			break
+		}
+		source, err = symbol.(gomulus.SourceInterface)
+		if err != nil {
+			break
+		}
+
+		found = true
 
 	}
 
 	if !found {
 
-		return nil, nil, fmt.Errorf("no source driver found under the name `%s`", Source.Driver)
+		return nil, nil, fmt.Errorf("no source driver found under the name `%s`", Source.Driver, err.Error())
 
 	}
 
+	err = nil
 	found = false
 
 	switch Destination.Driver {
 
 	case "csv":
 
-		found = true
 		destination = &destinations.DefaultCSVDestination{}
+		found = true
 
 	case "mysql":
 
-		found = true
 		destination = &destinations.DefaultMysqlDestination{}
+		found = true
 
 	default:
 
-		for _, pc := range destinationPlugins {
-			if Destination.Driver == pc.Name {
-				found = true
-				pc.Path, err = filepath.Abs(pc.Path)
-				if err != nil {
-					log.Fatal(err.Error())
-				}
-				plug, err := plugin.Open(pc.Path)
-				if err != nil {
-					log.Fatal(err.Error())
-				}
-				symbol, err := plug.Lookup(pc.Name)
-				if err != nil {
-					log.Fatal(err.Error())
-				}
-				destination, _ = symbol.(gomulus.DestinationInterface)
-				break
-			}
+		pluginPath, err = filepath.Abs(Destination.Plugin)
+		if err != nil {
+			break
 		}
+		plug, err := plugin.Open(plugin.Path)
+		if err != nil {
+			break
+		}
+		symbol, err := plug.Lookup(pc.Name)
+		if err != nil {
+			break
+		}
+		destination, err = symbol.(gomulus.DestinationInterface)
+		if err != nil {
+			break
+		}
+
+		found = true
 
 	}
 
 	if !found {
 
-		return nil, nil, fmt.Errorf("no destination driver found under the name `%s`", Destination.Driver)
+		return nil, nil, fmt.Errorf("no destination driver found under the name `%s`", Destination.Driver, err.Error())
 
 	}
 
@@ -321,6 +319,8 @@ func Start(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugin
 	if err = destination.New(Destination.Options); err != nil {
 		return nil, nil, err
 	}
+
+	log.Print(fmt.Sprintf("getting source driver jobs..."))
 
 	jobs, err := source.GetJobs()
 
