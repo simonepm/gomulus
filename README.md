@@ -110,11 +110,11 @@ In the `plugin` directory of this repository you can find ready-made examples of
 Develop your custom source driver by extending the default SourceInterface:
 
 ```go
-    type SourceInterface interface {
-        New(map[string]interface{}) error
-        GetJobs() ([]map[string]interface{}, error)
-        GetData(map[string]interface{}) ([][]interface{}, error)
-    }
+type SourceInterface interface {
+    New(map[string]interface{}) error
+    GetJobs() ([]map[string]interface{}, error)
+    GetData(map[string]interface{}) ([][]interface{}, error)
+}
 ```
 
 `New` method of your driver should expect a `map[string]interface{}` as argument, corresponding to the source `options` object in your JSON configuration file.
@@ -131,11 +131,11 @@ Every job will be passed to `GetData` method next.
 Develop your custom destination driver by extending the default DestinationInterface:
 
 ```go
-    type DestinationInterface interface {
-        New(map[string]interface{}) error
-        PreProcessData([][]interface{}) ([][]interface{}, error)
-        PersistData([][]interface{}) (int, error)
-    }
+type DestinationInterface interface {
+    New(map[string]interface{}) error
+    PreProcessData([][]interface{}) ([][]interface{}, error)
+    PersistData([][]interface{}) (int, error)
+}
 ```
 
 `New` method of your driver should expect a `map[string]interface{}` as argument, corresponding to the destination `options` object in your JSON configuration file. Here you can initialize your driver and return an error in case something goes wrong with the configuration options provided.

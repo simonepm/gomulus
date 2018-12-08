@@ -3,50 +3,41 @@ package main
 import (
 	"flag"
 	"fmt"
+	"gomulus"
+	destinations "gomulus/destination"
+	sources "gomulus/source"
 	"io/ioutil"
+	"log"
 	"math"
-	"math/rand"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"plugin"
-	"gomulus"
-	sources "gomulus/source"
-	destinations "gomulus/destination"
-	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
 )
 
-// FlagConfig ...
-var FlagConfig = flag.String("config", "./gomulus.json", "JSON config file path")
+var FlagConfig = flag.String("config", "./config/config.json", "JSON config file path")
 
-// SelectionTaskPool ...
-var SelectionTaskPool map[int]chan gomulus.SelectionTask
-
-// InsertionTaskPool ...
-var InsertionTaskPool map[int]chan gomulus.InsertionTask
-
-// SourceInstance ...
 var SourceInstance gomulus.SourceInterface
 
-// DestinationInstance ...
 var DestinationInstance gomulus.DestinationInterface
 
-// PendingTasksCount ...
-var PendingTasksCount int64
+var FetchPool map[int]chan map[string]interface{}
 
-func init() {
-	rand.Seed(time.Now().Unix())
-}
+var PersistPool map[int]chan [][]interface{}
+
+var FetchChannelLength = 1000
+
+var PersistChannelLength = 1000
+
+var PendingJobsCount int64
 
 func main() {
 
 	var err error
 	var started = time.Now()
-
-	// Config
 
 	flag.Parse()
 
@@ -55,11 +46,11 @@ func main() {
 	var configFile *os.File
 
 	if configPath, err = filepath.Abs(*FlagConfig); err != nil {
-		panic(err)
+		log.Fatal(err.Error())
 	}
 
 	if configFile, err = os.Open(configPath); err != nil {
-		panic(err)
+		log.Fatal(err.Error())
 	}
 
 	configJSON, _ := ioutil.ReadAll(configFile)
@@ -67,73 +58,83 @@ func main() {
 	_ = configFile.Close()
 
 	if err = config.Unmarshal(configJSON); err != nil {
-		panic(err)
+		log.Fatal(err.Error())
 	}
-
-	// Init
 
 	Source := config.Source
 	Destination := config.Destination
 
-	SelectionChannelLength := 1000
-
-	SelectionTaskPool = make(map[int]chan gomulus.SelectionTask, 0)
+	FetchPool = make(map[int]chan map[string]interface{}, 0)
 
 	for i := 1; i <= int(math.Max(1, float64(Source.Pool))); i++ {
 
-		SelectionTaskPool[i] = make(chan gomulus.SelectionTask, SelectionChannelLength)
+		FetchPool[i] = make(chan map[string]interface{}, FetchChannelLength)
 
 	}
 
-	// TODO limit selection->insertion rate
-
-	InsertionChannelLength := 1000
-
-	InsertionTaskPool = make(map[int]chan gomulus.InsertionTask, 0)
+	PersistPool = make(map[int]chan [][]interface{}, 0)
 
 	for i := 1; i <= int(math.Max(1, float64(Destination.Pool))); i++ {
 
-		InsertionTaskPool[i] = make(chan gomulus.InsertionTask, InsertionChannelLength)
+		PersistPool[i] = make(chan [][]interface{}, PersistChannelLength)
 
+	}
+
+	log.Print("starting...")
+
+	if SourceInstance, DestinationInstance, err = Start(Source, Destination, config.Plugins); err != nil {
+		log.Fatal(err.Error())
 	}
 
 	go func() {
 
-		for q, concurrentSelect := range SelectionTaskPool {
+		for q, Selection := range FetchPool {
 
-			go func(SelectionChannel chan gomulus.SelectionTask, q int) {
+			go func(FetchChannel chan map[string]interface{}, q int) {
 
-				for SelectionTask := range SelectionChannel {
+				for job := range FetchChannel {
 
-					if data, err := SourceInstance.ProcessTask(SelectionTask); err != nil {
+					if data, err := SourceInstance.FetchData(job); err != nil {
 
-						atomic.AddInt64(&PendingTasksCount, -1)
+						atomic.AddInt64(&PendingJobsCount, -1)
 
-						fmt.Fprintln(os.Stderr, "failed task on selection queue", q, "; an error occurred:", err.Error())
+						log.Print("failed fetch-job on queue ", q, "; an error occurred: ", err.Error())
 
 					} else {
 
-						InsertionTask, err := DestinationInstance.GetTask(data)
+						data, err := DestinationInstance.PreProcessData(data)
 
 						if err != nil {
 
-							atomic.AddInt64(&PendingTasksCount, -1)
+							atomic.AddInt64(&PendingJobsCount, -1)
 
-							fmt.Fprintln(os.Stderr, "failed insertion task generation on selection queue", q, "; an error occurred:", err.Error())
+							log.Print("failed pre-processing on queue ", q, "; an error occurred: ", err.Error())
 
 						} else {
 
-							queuesLengths := make(map[int]int, 0)
+							queue := 0
 
-							for id, queue := range InsertionTaskPool {
-								queuesLengths[id] = len(queue)
+							for true {
+
+								lengths := make(map[int]int, 0)
+
+								for id, queue := range PersistPool {
+									lengths[id] = len(queue)
+								}
+
+								queue = GetShortestQueue(lengths)
+
+								if len(PersistPool[queue]) <= 0 || len(PersistPool[queue]) < PersistChannelLength {
+									break
+								}
+
+								time.Sleep(time.Millisecond * 500)
+
 							}
 
-							minLengthQueue := GetShortestQueue(queuesLengths)
+							PersistPool[queue] <- data
 
-							InsertionTaskPool[minLengthQueue] <- InsertionTask
-
-							fmt.Fprintln(os.Stdout, "selected", len(data), "rows by selection task on queue", q)
+							log.Print("fetching ", len(data), " rows on queue ", q, "...")
 
 						}
 
@@ -141,7 +142,7 @@ func main() {
 
 				}
 
-			}(concurrentSelect, q)
+			}(Selection, q)
 
 		}
 
@@ -149,21 +150,23 @@ func main() {
 
 	go func() {
 
-		for q, concurrentInsert := range InsertionTaskPool {
+		for q, concurrentInsert := range PersistPool {
 
-			go func(InsertionChannel chan gomulus.InsertionTask, q int) {
+			go func(PersistChannel chan [][]interface{}, q int) {
 
-				for InsertionTask := range InsertionChannel {
+				for data := range PersistChannel {
 
-					atomic.AddInt64(&PendingTasksCount, -1)
+					log.Print("fetched ", len(data), " rows on queue ", q, "...")
 
-					if n, err := DestinationInstance.ProcessTask(InsertionTask); err != nil {
+					atomic.AddInt64(&PendingJobsCount, -1)
 
-						fmt.Fprintln(os.Stderr, "failed task on insertion queue", q, "; lost", n, "rows due to an error: ", err.Error())
+					if n, err := DestinationInstance.PersistData(data); err != nil {
+
+						log.Print("failed persist-job on queue ", q, "; lost ", n, ", an error occurred: ", err.Error())
 
 					} else {
 
-						fmt.Fprintln(os.Stdout, "stored", n, "rows by insertion task on queue", q)
+						log.Print("persisted ", n, " rows on queue ", q)
 
 					}
 
@@ -175,33 +178,7 @@ func main() {
 
 	}()
 
-	// Run
-
-	if SourceInstance, DestinationInstance, err = Run(Source, Destination, config.Plugins); err != nil {
-		panic(err)
-	}
-
-	SelectionTasks, err := SourceInstance.GetTasks()
-
-	queuesLengths := make(map[int]int, 0)
-
-	for id, queue := range SelectionTaskPool {
-
-		queuesLengths[id] = len(queue)
-
-	}
-
-	for _, SelectionTask := range SelectionTasks {
-
-		atomic.AddInt64(&PendingTasksCount, 1)
-
-		minLengthQueue := GetShortestQueue(queuesLengths)
-
-		SelectionTaskPool[minLengthQueue] <- SelectionTask
-
-	}
-
-	// Exit
+	log.Print("running...")
 
 	sigterm := make(chan os.Signal, 2)
 
@@ -209,7 +186,7 @@ func main() {
 
 	timeElapsed := 0
 	timeTimer := time.NewTimer(time.Second)
-	timeOut := int(config.Timeout/1000)
+	timeOut := int(config.Timeout / 1000)
 
 	go func() {
 		for {
@@ -217,9 +194,9 @@ func main() {
 			case <-timeTimer.C:
 				timeElapsed++
 				if timeOut > 0 && timeElapsed > timeOut {
-					panic(fmt.Errorf("timed out after %d seconds", timeOut))
+					log.Fatal(fmt.Sprintf("timed out after %d seconds", timeOut))
 				}
-				if atomic.LoadInt64(&PendingTasksCount) == 0 {
+				if atomic.LoadInt64(&PendingJobsCount) == 0 {
 					sigterm <- syscall.SIGINT
 				}
 				timeTimer.Reset(time.Second)
@@ -230,14 +207,13 @@ func main() {
 
 	<-sigterm
 
-	fmt.Fprintln(os.Stdout, "DONE, took", time.Now().Unix()-started.Unix(), "seconds")
+	log.Print("DONE, took ", time.Now().Unix()-started.Unix(), " seconds")
 
 	os.Exit(0)
 
 }
 
-// Run ...
-func Run(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugins gomulus.PluginsConfig) (gomulus.SourceInterface, gomulus.DestinationInterface, error) {
+func Start(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugins gomulus.PluginsConfig) (gomulus.SourceInterface, gomulus.DestinationInterface, error) {
 
 	var err error
 	var found bool
@@ -270,11 +246,11 @@ func Run(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugins 
 				found = true
 				pc.Path, err = filepath.Abs(pc.Path)
 				if err != nil {
-					panic(err)
+					log.Fatal(err.Error())
 				}
 				plug, err := plugin.Open(pc.Path)
 				if err != nil {
-					panic(err)
+					log.Fatal(err.Error())
 				}
 				symbol, err := plug.Lookup(pc.Name)
 				source, _ = symbol.(gomulus.SourceInterface)
@@ -288,10 +264,6 @@ func Run(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugins 
 
 		return nil, nil, fmt.Errorf("no source driver found under the name `%s`", Source.Driver)
 
-	}
-
-	if err = source.New(Source); err != nil {
-		return nil, nil, err
 	}
 
 	found = false
@@ -315,18 +287,15 @@ func Run(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugins 
 				found = true
 				pc.Path, err = filepath.Abs(pc.Path)
 				if err != nil {
-					panic(err)
+					log.Fatal(err.Error())
 				}
 				plug, err := plugin.Open(pc.Path)
 				if err != nil {
-					panic(err)
+					log.Fatal(err.Error())
 				}
-				if pc.Symbol == "" {
-					pc.Symbol = fmt.Sprintf("%s%s", strings.Title(pc.Name), "Destination")
-				}
-				symbol, err := plug.Lookup(pc.Symbol)
+				symbol, err := plug.Lookup(pc.Name)
 				if err != nil {
-					panic(err)
+					log.Fatal(err.Error())
 				}
 				destination, _ = symbol.(gomulus.DestinationInterface)
 				break
@@ -341,34 +310,66 @@ func Run(Source gomulus.DriverConfig, Destination gomulus.DriverConfig, Plugins 
 
 	}
 
-	if err = destination.New(Destination); err != nil {
+	log.Print(fmt.Sprintf("starting a new `%s` source driver instance...", Source.Driver))
+
+	if err = source.New(Source.Options); err != nil {
 		return nil, nil, err
 	}
+
+	log.Print(fmt.Sprintf("starting a new `%s` destination driver instance...", Destination.Driver))
+
+	if err = destination.New(Destination.Options); err != nil {
+		return nil, nil, err
+	}
+
+	jobs, err := source.GetJobs()
+
+	lengths := make(map[int]int, 0)
+
+	for id, queue := range FetchPool {
+		lengths[id] = len(queue)
+	}
+
+	go func() {
+
+		for _, job := range jobs {
+
+			atomic.AddInt64(&PendingJobsCount, 1)
+
+			queue := 0
+
+			lengths := make(map[int]int, 0)
+
+			for id, queue := range FetchPool {
+				lengths[id] = len(queue)
+			}
+
+			queue = GetShortestQueue(lengths)
+
+			FetchPool[queue] <- job
+
+		}
+
+	}()
 
 	return source, destination, nil
 
 }
 
-// GetShortestQueue ...
 func GetShortestQueue(lengths map[int]int) int {
 
 	var minLength = math.MaxInt64
-	var minLengthQueue = 0 // RandInt(1, len(lengths))
+	var queue int
 
-	if minLengthQueue == 0 {
+	if queue == 0 {
 		for id, length := range lengths {
 			if length < minLength {
-				minLengthQueue = id
+				queue = id
 				minLength = length
 			}
 		}
 	}
 
-	return minLengthQueue
+	return queue
 
-}
-
-// RandInt ...
-func RandInt(min, max int) int {
-	return rand.Intn(max - min) + min
 }
