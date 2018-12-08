@@ -102,7 +102,7 @@ func main() {
 
 					} else {
 
-						data, err := DestinationInstance.PreProcessData(data)
+						data, err := DestinationInstance.PreProcessData(data) // TODO remove
 
 						if err != nil {
 
