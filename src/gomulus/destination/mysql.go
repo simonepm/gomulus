@@ -4,10 +4,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	_ "github.com/go-sql-driver/mysql"
 	"gomulus"
 	"regexp"
 	"strings"
+
+	_ "github.com/go-sql-driver/mysql"
 )
 
 type DefaultMysqlDestination struct {
@@ -23,7 +24,7 @@ func (d *DefaultMysqlDestination) New(config map[string]interface{}) error {
 	var db *sql.DB
 	var truncate, _ = config["truncate"].(bool)
 	var database, _ = config["database"].(string)
-	var endpoint, _ = config["endpoint"].(string)
+	var endpoint, _ = config["host"].(string)
 	var table, _ = config["table"].(string)
 	var tables = make([]string, 0)
 	var rows *sql.Rows

@@ -17,20 +17,26 @@ type DefaultCSVSource struct {
 	Path   string
 	Limit  int
 	EOF    string
-	Strip  bool
+	Sep    string
+	Offset int
 }
 
 func (s *DefaultCSVSource) New(config map[string]interface{}) error {
 
 	var err error
 	var file *os.File
-	var eof, _ = config["line_separator"].(string)
+	var eof, _ = config["line_sep"].(string)
+	var sep, _ = config["column_sep"].(string)
 	var limit, _ = config["limit"].(float64)
 	var path, _ = config["path"].(string)
-	var strip, _ = config["strip_header"].(bool)
+	var offset, _ = config["offset"].(float64)
 
 	if eof == "" {
 		eof = "\n"
+	}
+
+	if sep == "" {
+		sep = ","
 	}
 
 	if path, err = filepath.Abs(path); err != nil {
@@ -42,10 +48,11 @@ func (s *DefaultCSVSource) New(config map[string]interface{}) error {
 	}
 
 	s.EOF = eof
+	s.Sep = sep
 	s.File = file
 	s.Path = path
 	s.Limit = int(math.Max(1, limit))
-	s.Strip = strip
+	s.Offset = int(math.Max(0, limit))
 
 	return nil
 
@@ -53,22 +60,19 @@ func (s *DefaultCSVSource) New(config map[string]interface{}) error {
 
 func (s *DefaultCSVSource) GetJobs() ([]map[string]interface{}, error) {
 
-	var count int
-	var offset int
-	var bytes int
+	var jobs = make([]map[string]interface{}, 0)
+	var lines = make(map[int]int, 0)
 
-	jobs := make([]map[string]interface{}, 0)
-	lines := make(map[int]int, 0)
-
+	offset := s.Offset
+	count := 0
 	scanner := bufio.NewScanner(s.File)
 
-	count = 0
+	lines[0] = 0
 
 	for scanner.Scan() {
 
 		count++
-		bytes += len(scanner.Bytes()) + len([]byte(s.EOF))
-		lines[count] = bytes
+		lines[count] += len(scanner.Bytes()) + len([]byte(s.EOF))
 
 	}
 
@@ -76,18 +80,9 @@ func (s *DefaultCSVSource) GetJobs() ([]map[string]interface{}, error) {
 		return nil, scanner.Err()
 	}
 
-	total := count
-	count = 0
-
 	for true {
 
-		count++
-
-		if count == 1 && s.Strip {
-			offset += 1
-		}
-
-		if offset > total {
+		if offset >= count {
 			break
 		}
 
@@ -140,6 +135,7 @@ func (s *DefaultCSVSource) FetchData(job map[string]interface{}) ([][]interface{
 	}
 
 	reader := csv.NewReader(strings.NewReader(string(buffer)))
+	reader.Comma = s.Sep
 
 	for {
 
@@ -150,6 +146,7 @@ func (s *DefaultCSVSource) FetchData(job map[string]interface{}) ([][]interface{
 		if err == io.EOF {
 			break
 		}
+
 		if err != nil {
 			continue
 		}

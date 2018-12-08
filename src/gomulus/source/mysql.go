@@ -4,10 +4,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	_ "github.com/go-sql-driver/mysql"
 	"gomulus"
 	"math"
 	"regexp"
+
+	_ "github.com/go-sql-driver/mysql"
 )
 
 type DefaultMysqlSource struct {
@@ -28,7 +29,7 @@ func (s *DefaultMysqlSource) New(config map[string]interface{}) error {
 	var rows *sql.Rows
 	var count, _ = config["count"].(float64)
 	var offset, _ = config["offset"].(float64)
-	var endpoint, _ = config["endpoint"].(string)
+	var endpoint, _ = config["host"].(string)
 	var database, _ = config["database"].(string)
 	var table, _ = config["table"].(string)
 	var limit, _ = config["limit"].(float64)
