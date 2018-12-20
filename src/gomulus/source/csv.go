@@ -12,13 +12,14 @@ import (
 )
 
 type DefaultCSVSource struct {
-	Config gomulus.DriverConfig
-	File   *os.File
-	Path   string
-	Limit  int
-	EOF    string
-	Sep    string
-	Offset int
+	Config  gomulus.DriverConfig
+	File    *os.File
+	Path    string
+	Limit   int
+	EOF     string
+	Sep     string
+	Offset  int
+	Columns []int
 }
 
 func (s *DefaultCSVSource) New(config map[string]interface{}) error {
@@ -30,6 +31,7 @@ func (s *DefaultCSVSource) New(config map[string]interface{}) error {
 	var limit, _ = config["limit"].(float64)
 	var path, _ = config["path"].(string)
 	var offset, _ = config["offset"].(float64)
+	columns, ok := config["columns"].([]int)
 
 	if eof == "" {
 		eof = "\n"
@@ -52,7 +54,11 @@ func (s *DefaultCSVSource) New(config map[string]interface{}) error {
 	s.File = file
 	s.Path = path
 	s.Limit = int(math.Max(1, limit))
-	s.Offset = int(math.Max(0, limit))
+	s.Offset = int(math.Max(0, offset))
+
+	if ok {
+		s.Columns = columns
+	}
 
 	return nil
 
@@ -63,17 +69,14 @@ func (s *DefaultCSVSource) GetJobs() ([]map[string]interface{}, error) {
 	var jobs = make([]map[string]interface{}, 0)
 	var lines = make(map[int]int, 0)
 
-	offset := s.Offset
 	count := 0
+	lines[0] = 0
+	offset := s.Offset
 	scanner := bufio.NewScanner(s.File)
 
-	lines[0] = 0
-
 	for scanner.Scan() {
-
 		count++
 		lines[count] += len(scanner.Bytes()) + len([]byte(s.EOF))
-
 	}
 
 	if scanner.Err() != nil {
@@ -135,24 +138,25 @@ func (s *DefaultCSVSource) FetchData(job map[string]interface{}) ([][]interface{
 	}
 
 	reader := csv.NewReader(strings.NewReader(string(buffer)))
-	reader.Comma = s.Sep
+	reader.Comma = []rune(s.Sep)[0]
 
 	for {
 
 		slice := make([]interface{}, 0)
 
-		line, err := reader.Read()
+		columns, err := reader.Read()
 
 		if err == io.EOF {
 			break
 		}
-
 		if err != nil {
 			continue
 		}
 
-		for _, l := range line {
-			slice = append(slice, []byte(l))
+		for i, c := range columns {
+			if len(s.Columns) > 0 && InSliceInt(i+1, s.Columns) || len(s.Columns) == 0 {
+				slice = append(slice, []byte(c))
+			}
 		}
 
 		data = append(data, slice)
@@ -160,5 +164,17 @@ func (s *DefaultCSVSource) FetchData(job map[string]interface{}) ([][]interface{
 	}
 
 	return data, nil
+
+}
+
+func InSliceInt(a int, list []int) bool {
+
+	for _, b := range list {
+		if b == a {
+			return true
+		}
+	}
+
+	return false
 
 }

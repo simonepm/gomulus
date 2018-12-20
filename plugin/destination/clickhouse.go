@@ -31,9 +31,9 @@ func (d *clickhouseDestination) New(config map[string]interface{}) error {
 	var database, _ = config["database"].(string)
 	var endpoint, _ = config["endpoint"].(string)
 	var table, _ = config["table"].(string)
-	var create, _ = config["create"].(map[string]interface{})
-	var columns, _ = ddl["columns"].([]interface{}) // []map[string]string
-	var engine, _ = ddl["engine"].(string)
+	var create, _ = config["create"].(bool)
+	var columns, _ = config["columns"].([]interface{})
+	var engine, _ = config["engine"].(string)
 	var tables = make([]string, 0)
 	var rows *sql.Rows
 
@@ -49,10 +49,14 @@ func (d *clickhouseDestination) New(config map[string]interface{}) error {
 		return err
 	}
 
-	if create != nil {
+	if create {
 		if err = createTable(con, database, table, columns, engine); err != nil {
 			return err
 		}
+	}
+
+	if _, err = con.Exec(fmt.Sprintf("USE `%s`", database)); err != nil {
+		return err
 	}
 
 	if rows, err = con.Query("SHOW TABLES"); err != nil {

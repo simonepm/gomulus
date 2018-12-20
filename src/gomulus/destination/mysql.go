@@ -54,7 +54,7 @@ func (d *DefaultMysqlDestination) New(config map[string]interface{}) error {
 		tables = append(tables, t)
 	}
 
-	if !inSlice(table, tables) {
+	if !InSliceString(table, tables) {
 		return fmt.Errorf("table not found `%s`.`%s`", database, table)
 	}
 
@@ -122,7 +122,7 @@ func (d *DefaultMysqlDestination) PersistData(data [][]interface{}) (int, error)
 
 }
 
-func inSlice(a string, list []string) bool {
+func InSliceString(a string, list []string) bool {
 
 	for _, b := range list {
 		if b == a {
