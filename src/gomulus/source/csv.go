@@ -28,7 +28,7 @@ func (s *DefaultCSVSource) New(config map[string]interface{}) error {
 	var err error
 	var file *os.File
 	var sep, _ = config["column_separator"].(string)
-	var eof, _ = config["line_sep"].(string)
+	var eof, _ = config["line_separator"].(string)
 	var limit, _ = config["limit"].(float64)
 	var offset, _ = config["offset"].(float64)
 	var path, _ = config["path"].(string)

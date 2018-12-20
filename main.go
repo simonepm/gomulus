@@ -103,8 +103,6 @@ func main() {
 
 					} else {
 
-						data, err := DestinationInstance.PreProcessData(data) // TODO remove
-
 						if err != nil {
 
 							atomic.AddInt64(&PendingJobsCount, -1)
@@ -330,6 +328,8 @@ func Start(Source gomulus.DriverConfig, Destination gomulus.DriverConfig) (gomul
 	for id, queue := range FetchPool {
 		lengths[id] = len(queue)
 	}
+
+	log.Print(fmt.Sprintf("processing %d source driver jobs...", len(jobs)))
 
 	go func() {
 
