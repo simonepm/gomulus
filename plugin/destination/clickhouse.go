@@ -49,6 +49,17 @@ func (d *clickhouseDestination) New(config map[string]interface{}) error {
 		return err
 	}
 
+	if _, err = con.Exec(fmt.Sprintf("USE `%s`", database)); err != nil {
+		return err
+	}
+
+	if truncate {
+		if err = truncateTable(con, database, table); err != nil {
+			return err
+		}
+		create = true
+	}
+
 	if create {
 		if engine == "" {
 			engine = "ENGINE Memory"
@@ -56,10 +67,6 @@ func (d *clickhouseDestination) New(config map[string]interface{}) error {
 		if err = createTable(con, database, table, columns, engine); err != nil {
 			return err
 		}
-	}
-
-	if _, err = con.Exec(fmt.Sprintf("USE `%s`", database)); err != nil {
-		return err
 	}
 
 	if rows, err = con.Query("SHOW TABLES"); err != nil {
@@ -77,12 +84,6 @@ func (d *clickhouseDestination) New(config map[string]interface{}) error {
 
 	if !InSliceString(table, tables) {
 		return fmt.Errorf("table not found `%s`.`%s`", database, table)
-	}
-
-	if truncate {
-		if err = truncateTable(con, database, table); err != nil {
-			return err
-		}
 	}
 
 	d.Columns = columns
@@ -144,12 +145,6 @@ func (d *clickhouseDestination) PersistData(data [][]interface{}) (int, error) {
 			columnString := string(columnBytes)
 
 			switch columnType {
-			case "UInt8":
-				if v, err := strconv.ParseInt(columnString, 10, 8); err == nil {
-					parsedRow = append(parsedRow, uint8(v))
-				} else {
-					parsedRow = append(parsedRow, uint8(0))
-				}
 			case "Boolean":
 				switch columnString {
 				case "1":
@@ -160,6 +155,12 @@ func (d *clickhouseDestination) PersistData(data [][]interface{}) (int, error) {
 					parsedRow = append(parsedRow, uint8(1))
 				default:
 					parsedRow = append(parsedRow, 0)
+				}
+			case "UInt8":
+				if v, err := strconv.ParseInt(columnString, 10, 8); err == nil {
+					parsedRow = append(parsedRow, uint8(v))
+				} else {
+					parsedRow = append(parsedRow, uint8(0))
 				}
 			case "UInt16":
 				if v, err := strconv.ParseInt(columnString, 10, 16); err == nil {
@@ -295,10 +296,6 @@ func truncateTable(con *sql.DB, database string, table string) error {
 	}
 
 	if _, err := con.Exec(fmt.Sprintf("DROP TABLE `%s`.`%s`", database, table)); err != nil {
-		return err
-	}
-
-	if _, err := con.Exec(create); err != nil {
 		return err
 	}
 

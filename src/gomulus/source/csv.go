@@ -32,7 +32,7 @@ func (s *DefaultCSVSource) New(config map[string]interface{}) error {
 	var limit, _ = config["limit"].(float64)
 	var offset, _ = config["offset"].(float64)
 	var path, _ = config["path"].(string)
-	columns, ok := config["columns"].([]int)
+	columns, ok := config["columns"].([]interface{})
 
 	if eof == "" {
 		eof = "\n"
@@ -59,7 +59,10 @@ func (s *DefaultCSVSource) New(config map[string]interface{}) error {
 	s.Comma = sep
 
 	if ok {
-		s.Columns = columns
+		for _, c := range columns {
+			cc, _ := c.(float64)
+			s.Columns = append(s.Columns, int(cc))
+		}
 	}
 
 	return nil
@@ -99,8 +102,6 @@ func (s *DefaultCSVSource) GetJobs() ([]map[string]interface{}, error) {
 		if to-from < 1 {
 			break
 		}
-
-		// println(offset, from, to)
 
 		jobs = append(jobs, map[string]interface{}{
 			"from": from,
@@ -160,7 +161,7 @@ func (s *DefaultCSVSource) FetchData(job map[string]interface{}) ([][]interface{
 		}
 
 		for i, c := range columns {
-			if len(s.Columns) > 0 && InSliceInt(i+1, s.Columns) || len(s.Columns) == 0 {
+			if len(s.Columns) > 0 && InSliceInt(i, s.Columns) || len(s.Columns) == 0 {
 				slice = append(slice, []byte(c))
 			}
 		}
