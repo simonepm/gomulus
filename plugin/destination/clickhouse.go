@@ -50,6 +50,9 @@ func (d *clickhouseDestination) New(config map[string]interface{}) error {
 	}
 
 	if create {
+		if engine == "" {
+			engine = "ENGINE Memory"
+		}
 		if err = createTable(con, database, table, columns, engine); err != nil {
 			return err
 		}
@@ -72,7 +75,7 @@ func (d *clickhouseDestination) New(config map[string]interface{}) error {
 		tables = append(tables, t)
 	}
 
-	if !inSlice(table, tables) {
+	if !InSliceString(table, tables) {
 		return fmt.Errorf("table not found `%s`.`%s`", database, table)
 	}
 
@@ -277,7 +280,7 @@ func createTable(con *sql.DB, database string, table string, columns []interface
 		return fmt.Errorf("error while executing '%s':\n%s", query, err.Error())
 	}
 
-	return nil
+	return err
 
 }
 
@@ -305,7 +308,7 @@ func truncateTable(con *sql.DB, database string, table string) error {
 
 }
 
-func inSlice(a string, list []string) bool {
+func InSliceString(a string, list []string) bool {
 
 	for _, b := range list {
 		if b == a {

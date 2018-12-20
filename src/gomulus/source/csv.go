@@ -20,17 +20,18 @@ type DefaultCSVSource struct {
 	Sep     string
 	Offset  int
 	Columns []int
+	Comma   string
 }
 
 func (s *DefaultCSVSource) New(config map[string]interface{}) error {
 
 	var err error
 	var file *os.File
+	var sep, _ = config["column_separator"].(string)
 	var eof, _ = config["line_sep"].(string)
-	var sep, _ = config["column_sep"].(string)
 	var limit, _ = config["limit"].(float64)
-	var path, _ = config["path"].(string)
 	var offset, _ = config["offset"].(float64)
+	var path, _ = config["path"].(string)
 	columns, ok := config["columns"].([]int)
 
 	if eof == "" {
@@ -55,6 +56,7 @@ func (s *DefaultCSVSource) New(config map[string]interface{}) error {
 	s.Path = path
 	s.Limit = int(math.Max(1, limit))
 	s.Offset = int(math.Max(0, offset))
+	s.Comma = sep
 
 	if ok {
 		s.Columns = columns
@@ -138,7 +140,7 @@ func (s *DefaultCSVSource) FetchData(job map[string]interface{}) ([][]interface{
 	}
 
 	reader := csv.NewReader(strings.NewReader(string(buffer)))
-	reader.Comma = []rune(s.Sep)[0]
+	reader.Comma = []rune(s.Comma)[0]
 
 	for {
 
