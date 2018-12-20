@@ -80,11 +80,9 @@ func (d *clickhouseDestination) New(config map[string]interface{}) error {
 	}
 
 	if truncate {
-
 		if err = truncateTable(con, database, table); err != nil {
 			return err
 		}
-
 	}
 
 	d.Columns = columns

@@ -71,18 +71,20 @@ func (s *DefaultCSVSource) GetJobs() ([]map[string]interface{}, error) {
 	var jobs = make([]map[string]interface{}, 0)
 	var lines = make(map[int]int, 0)
 
-	count := 0
-	lines[0] = 0
 	offset := s.Offset
+	count := 0
+	total := 0
 	scanner := bufio.NewScanner(s.File)
 
+	lines[0] = 0
 	for scanner.Scan() {
 		count++
-		lines[count] += len(scanner.Bytes()) + len([]byte(s.EOF))
-	}
-
-	if scanner.Err() != nil {
-		return nil, scanner.Err()
+		length := total + len([]byte(scanner.Text())) + len([]byte(s.EOF))
+		lines[count] = length
+		total = length
+		if scanner.Err() != nil {
+			return nil, scanner.Err()
+		}
 	}
 
 	for true {
@@ -98,12 +100,14 @@ func (s *DefaultCSVSource) GetJobs() ([]map[string]interface{}, error) {
 			break
 		}
 
-		offset = offset + s.Limit
+		// println(offset, from, to)
 
 		jobs = append(jobs, map[string]interface{}{
 			"from": from,
 			"to":   to,
 		})
+
+		offset = offset + s.Limit
 
 	}
 
