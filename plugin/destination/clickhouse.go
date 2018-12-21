@@ -35,7 +35,6 @@ func (d *clickhouseDestination) New(config map[string]interface{}) error {
 	var columns, _ = config["columns"].([]interface{})
 	var engine, _ = config["engine"].(string)
 	var tables = make([]string, 0)
-	var rows *sql.Rows
 
 	if ok, _ := regexp.MatchString(`^[\p{L}_][\p{L}\p{N}@$#_]{0,127}$`, database); !ok {
 		return errors.New(fmt.Sprintf("invalid database name `%s`", database))
@@ -49,37 +48,34 @@ func (d *clickhouseDestination) New(config map[string]interface{}) error {
 		return err
 	}
 
-	if _, err = con.Exec(fmt.Sprintf("USE `%s`", database)); err != nil {
+	if tables, err = showTables(con, database, table); err != nil {
 		return err
 	}
 
-	if truncate {
+	if truncate && InSliceString(table, tables) {
+
 		if err = truncateTable(con, database, table); err != nil {
 			return err
 		}
+
 		create = true
+
 	}
 
 	if create {
+
 		if engine == "" {
 			engine = "ENGINE Memory"
 		}
+
 		if err = createTable(con, database, table, columns, engine); err != nil {
 			return err
 		}
-	}
 
-	if rows, err = con.Query("SHOW TABLES"); err != nil {
-		return err
-	}
-
-	for rows.Next() {
-		t := ""
-		err := rows.Scan(&t)
-		if err != nil {
+		if tables, err = showTables(con, database, table); err != nil {
 			return err
 		}
-		tables = append(tables, t)
+
 	}
 
 	if !InSliceString(table, tables) {
@@ -300,6 +296,33 @@ func truncateTable(con *sql.DB, database string, table string) error {
 	}
 
 	return nil
+
+}
+
+func showTables(con *sql.DB, database string, table string) ([]string, error) {
+
+	var err error
+	var rows *sql.Rows
+	var tables []string
+
+	if _, err = con.Exec(fmt.Sprintf("USE `%s`", database)); err != nil {
+		return nil, err
+	}
+
+	if rows, err = con.Query("SHOW TABLES"); err != nil {
+		return nil, err
+	}
+
+	for rows.Next() {
+		t := ""
+		err := rows.Scan(&t)
+		if err != nil {
+			return nil, err
+		}
+		tables = append(tables, t)
+	}
+
+	return tables, nil
 
 }
 
