@@ -16,30 +16,29 @@ type DefaultCSVSource struct {
 	File    *os.File
 	Path    string
 	Limit   int
-	EOF     string
-	Sep     string
 	Offset  int
-	Columns []int
+	EOL     string
 	Comma   string
+	Columns []int
 }
 
 func (s *DefaultCSVSource) New(config map[string]interface{}) error {
 
 	var err error
 	var file *os.File
-	var sep, _ = config["column_separator"].(string)
-	var eof, _ = config["line_separator"].(string)
+	var comma, _ = config["column_separator"].(string)
+	var eol, _ = config["line_separator"].(string)
 	var limit, _ = config["limit"].(float64)
 	var offset, _ = config["offset"].(float64)
 	var path, _ = config["path"].(string)
 	columns, ok := config["columns"].([]interface{})
 
-	if eof == "" {
-		eof = "\n"
+	if eol == "" {
+		eol = "\n"
 	}
 
-	if sep == "" {
-		sep = ","
+	if comma == "" {
+		comma = ","
 	}
 
 	if path, err = filepath.Abs(path); err != nil {
@@ -50,13 +49,13 @@ func (s *DefaultCSVSource) New(config map[string]interface{}) error {
 		return err
 	}
 
-	s.EOF = eof
-	s.Sep = sep
+	s.EOL = eol
+	s.Comma = comma
 	s.File = file
 	s.Path = path
 	s.Limit = int(math.Max(1, limit))
 	s.Offset = int(math.Max(0, offset))
-	s.Comma = sep
+	s.Comma = comma
 
 	if ok {
 		for _, c := range columns {
@@ -82,7 +81,7 @@ func (s *DefaultCSVSource) GetJobs() ([]map[string]interface{}, error) {
 	lines[0] = 0
 	for scanner.Scan() {
 		count++
-		length := total + len([]byte(scanner.Text())) + len([]byte(s.EOF))
+		length := total + len([]byte(scanner.Text())) + len([]byte(s.EOL))
 		lines[count] = length
 		total = length
 		if scanner.Err() != nil {
