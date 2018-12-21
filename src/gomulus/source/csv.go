@@ -89,17 +89,20 @@ func (s *DefaultCSVSource) GetJobs() ([]map[string]interface{}, error) {
 		}
 	}
 
-	for true {
+	stop := false
 
-		if offset >= count {
-			break
-		}
+	for true {
 
 		from := lines[offset]
 		to := lines[offset+s.Limit]
 
-		if to-from < 1 {
+		if stop {
 			break
+		}
+
+		if to == 0 || to > total {
+			to = total
+			stop = true
 		}
 
 		jobs = append(jobs, map[string]interface{}{
