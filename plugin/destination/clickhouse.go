@@ -4,12 +4,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	_ "github.com/kshvakov/clickhouse"
 	"gomulus"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	_ "github.com/kshvakov/clickhouse"
 )
 
 var ClickhouseDestination clickhouseDestination
@@ -25,15 +26,14 @@ type clickhouseDestination struct {
 func (d *clickhouseDestination) New(config map[string]interface{}) error {
 
 	var err error
-	var db *sql.DB
+	var con *sql.DB
 	var truncate, _ = config["truncate"].(bool)
 	var database, _ = config["database"].(string)
 	var endpoint, _ = config["endpoint"].(string)
 	var table, _ = config["table"].(string)
 	var create, _ = config["create"].(bool)
-	var ddl, _ = config["ddl"].(map[string]interface{})
-	var columns, _ = ddl["columns"].([]interface{})
-	var engine, _ = ddl["engine"].(string)
+	var columns, _ = config["columns"].([]interface{})
+	var engine, _ = config["engine"].(string)
 	var tables = make([]string, 0)
 	var rows *sql.Rows
 
@@ -45,17 +45,31 @@ func (d *clickhouseDestination) New(config map[string]interface{}) error {
 		return errors.New(fmt.Sprintf("invalid table name `%s`", table))
 	}
 
-	if db, err = sql.Open("clickhouse", endpoint); err != nil {
+	if con, err = sql.Open("clickhouse", endpoint); err != nil {
 		return err
 	}
 
+	if _, err = con.Exec(fmt.Sprintf("USE `%s`", database)); err != nil {
+		return err
+	}
+
+	if truncate {
+		if err = truncateTable(con, database, table); err != nil {
+			return err
+		}
+		create = true
+	}
+
 	if create {
-		if err = createTable(db, database, table, columns, engine); err != nil {
+		if engine == "" {
+			engine = "ENGINE Memory"
+		}
+		if err = createTable(con, database, table, columns, engine); err != nil {
 			return err
 		}
 	}
 
-	if rows, err = db.Query("SHOW TABLES"); err != nil {
+	if rows, err = con.Query("SHOW TABLES"); err != nil {
 		return err
 	}
 
@@ -68,36 +82,14 @@ func (d *clickhouseDestination) New(config map[string]interface{}) error {
 		tables = append(tables, t)
 	}
 
-	if !inSlice(table, tables) {
+	if !InSliceString(table, tables) {
 		return fmt.Errorf("table not found `%s`.`%s`", database, table)
-	}
-
-	if truncate {
-
-		var q string
-
-		row := db.QueryRow(fmt.Sprintf("SHOW CREATE TABLE `%s`.`%s`", database, table))
-
-		err := row.Scan(&q)
-
-		if err != nil {
-			return err
-		}
-
-		if _, err := db.Exec(fmt.Sprintf("DROP TABLE `%s`.`%s`", database, table)); err != nil {
-			return err
-		}
-
-		if _, err := db.Exec(q); err != nil {
-			return err
-		}
-
 	}
 
 	d.Columns = columns
 	d.Database = database
 	d.Table = table
-	d.DB = db
+	d.DB = con
 
 	return nil
 
@@ -111,7 +103,7 @@ func (d *clickhouseDestination) PreProcessData(data [][]interface{}) ([][]interf
 
 func (d *clickhouseDestination) PersistData(data [][]interface{}) (int, error) {
 
-	db := d.DB
+	con := d.DB
 
 	marks := ""
 	for _, row := range data {
@@ -125,7 +117,7 @@ func (d *clickhouseDestination) PersistData(data [][]interface{}) (int, error) {
 
 	query := fmt.Sprintf("INSERT INTO `%s`.`%s` VALUES (%s)", d.Database, d.Table, marks)
 
-	tx, _ := db.Begin()
+	tx, _ := con.Begin()
 
 	stmt, err := tx.Prepare(query)
 
@@ -153,12 +145,6 @@ func (d *clickhouseDestination) PersistData(data [][]interface{}) (int, error) {
 			columnString := string(columnBytes)
 
 			switch columnType {
-			case "UInt8":
-				if v, err := strconv.ParseInt(columnString, 10, 8); err == nil {
-					parsedRow = append(parsedRow, uint8(v))
-				} else {
-					parsedRow = append(parsedRow, uint8(0))
-				}
 			case "Boolean":
 				switch columnString {
 				case "1":
@@ -169,6 +155,12 @@ func (d *clickhouseDestination) PersistData(data [][]interface{}) (int, error) {
 					parsedRow = append(parsedRow, uint8(1))
 				default:
 					parsedRow = append(parsedRow, 0)
+				}
+			case "UInt8":
+				if v, err := strconv.ParseInt(columnString, 10, 8); err == nil {
+					parsedRow = append(parsedRow, uint8(v))
+				} else {
+					parsedRow = append(parsedRow, uint8(0))
 				}
 			case "UInt16":
 				if v, err := strconv.ParseInt(columnString, 10, 16); err == nil {
@@ -245,6 +237,7 @@ func (d *clickhouseDestination) PersistData(data [][]interface{}) (int, error) {
 		if _, err = stmt.Exec(parsedRow...); err != nil {
 			return len(data), err
 		}
+
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -286,11 +279,31 @@ func createTable(con *sql.DB, database string, table string, columns []interface
 		return fmt.Errorf("error while executing '%s':\n%s", query, err.Error())
 	}
 
+	return err
+
+}
+
+func truncateTable(con *sql.DB, database string, table string) error {
+
+	var create string
+
+	row := con.QueryRow(fmt.Sprintf("SHOW CREATE TABLE `%s`.`%s`", database, table))
+
+	err := row.Scan(&create)
+
+	if err != nil {
+		return err
+	}
+
+	if _, err := con.Exec(fmt.Sprintf("DROP TABLE `%s`.`%s`", database, table)); err != nil {
+		return err
+	}
+
 	return nil
 
 }
 
-func inSlice(a string, list []string) bool {
+func InSliceString(a string, list []string) bool {
 
 	for _, b := range list {
 		if b == a {
