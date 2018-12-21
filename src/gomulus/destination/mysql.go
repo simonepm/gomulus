@@ -2,30 +2,40 @@ package gomulus
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"gomulus"
-	"os"
+	"regexp"
 	"strings"
+
 	_ "github.com/go-sql-driver/mysql"
 )
 
-// DefaultMysqlDestination ...
 type DefaultMysqlDestination struct {
-	Config gomulus.DriverConfig
-	DB     *sql.DB
-	Table  string
+	Config   gomulus.DriverConfig
+	DB       *sql.DB
+	Database string
+	Table    string
 }
 
-// New ...
-func (d *DefaultMysqlDestination) New(config gomulus.DriverConfig) error {
+func (d *DefaultMysqlDestination) New(config map[string]interface{}) error {
 
 	var err error
 	var db *sql.DB
-	var truncate, _ = config.Options["truncate"].(bool)
-	var endpoint, _ = config.Options["endpoint"].(string)
-	var table, _ = config.Options["table"].(string)
+	var truncate, _ = config["truncate"].(bool)
+	var database, _ = config["database"].(string)
+	var endpoint, _ = config["host"].(string)
+	var table, _ = config["table"].(string)
 	var tables = make([]string, 0)
 	var rows *sql.Rows
+
+	if ok, _ := regexp.MatchString(`^[\p{L}_][\p{L}\p{N}@$#_]{0,127}$`, database); !ok {
+		return errors.New(fmt.Sprintf("invalid database name `%s`", database))
+	}
+
+	if ok, _ := regexp.MatchString(`^[\p{L}_][\p{L}\p{N}@$#_]{0,127}$`, table); !ok {
+		return errors.New(fmt.Sprintf("invalid table name `%s`", table))
+	}
 
 	if db, err = sql.Open("mysql", endpoint); err != nil {
 		return err
@@ -45,80 +55,73 @@ func (d *DefaultMysqlDestination) New(config gomulus.DriverConfig) error {
 	}
 
 	if !InSliceString(table, tables) {
-		return fmt.Errorf("table not found `%s`", table)
+		return fmt.Errorf("table not found `%s`.`%s`", database, table)
 	}
 
 	d.Table = table
 
 	if truncate {
-		fmt.Fprintln(os.Stdout, "truncating table", table, "...")
-		if _, err := db.Exec(fmt.Sprintf("TRUNCATE TABLE %s", table)); err != nil {
+		if _, err := db.Exec(fmt.Sprintf("TRUNCATE TABLE `%s`.`%s`", database, table)); err != nil {
 			return err
 		}
 	}
 
+	d.Database = database
+	d.Table = table
 	d.DB = db
 
 	return nil
 
 }
 
-// GetTask ...
-func (d *DefaultMysqlDestination) GetTask(data [][]interface{}) (gomulus.InsertionTask, error) {
+func (d *DefaultMysqlDestination) PreProcessData(data [][]interface{}) ([][]interface{}, error) {
 
-	query := fmt.Sprintf("INSERT INTO %s VALUES ", d.Table)
-
-	for _, row := range data {
-		query += "("
-		for range row {
-			query += "?,"
-		}
-		query = strings.TrimRight(query, ",")
-		query += "),"
-	}
-	query = strings.TrimRight(query, ",")
-
-	return gomulus.InsertionTask{
-		Meta: map[string]interface{}{
-			"query": query,
-		},
-		Data: data,
-	}, nil
+	return data, nil
 
 }
 
-// ProcessTask ...
-func (d *DefaultMysqlDestination) ProcessTask(InsertionTask gomulus.InsertionTask) (int, error) {
+func (d *DefaultMysqlDestination) PersistData(data [][]interface{}) (int, error) {
 
 	db := d.DB
 
-	query, _ := InsertionTask.Meta["query"].(string)
+	marks := ""
+	for _, row := range data {
+		for range row {
+			marks += "?,"
+		}
+		break
+	}
 
-	vals := []interface{}{}
+	marks = strings.TrimRight(marks, ",")
 
-	stmt, err := db.Prepare(query)
+	query := fmt.Sprintf("INSERT INTO `%s`.`%s` VALUES (%s)", d.Database, d.Table, marks)
+
+	tx, _ := db.Begin()
+
+	stmt, err := tx.Prepare(query)
 
 	if err != nil {
-		return len(InsertionTask.Data), err
+		return len(data), err
 	}
 
 	defer stmt.Close()
 
-	for _, row := range InsertionTask.Data {
-		vals = append(vals, row...)
+	for _, row := range data {
+
+		if _, err = stmt.Exec(row...); err != nil {
+			return len(data), err
+		}
+
 	}
 
-	_, err = stmt.Exec(vals...)
-
-	if err != nil {
-		return len(InsertionTask.Data), err
+	if err := tx.Commit(); err != nil {
+		return len(data), err
 	}
 
-	return len(InsertionTask.Data), err
+	return len(data), err
 
 }
 
-// InSliceString ...
 func InSliceString(a string, list []string) bool {
 
 	for _, b := range list {

@@ -2,16 +2,17 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
-	_ "github.com/kshvakov/clickhouse"
 	"gomulus"
-	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	_ "github.com/kshvakov/clickhouse"
 )
 
-// ClickhouseDestination ...
 var ClickhouseDestination clickhouseDestination
 
 type clickhouseDestination struct {
@@ -22,96 +23,86 @@ type clickhouseDestination struct {
 	Columns  []interface{}
 }
 
-// New ...
-func (d *clickhouseDestination) New(config gomulus.DriverConfig) error {
+func (d *clickhouseDestination) New(config map[string]interface{}) error {
 
 	var err error
-	var db *sql.DB
-	var truncate, _ = config.Options["truncate"].(bool)
-	var database, _ = config.Options["database"].(string)
-	var endpoint, _ = config.Options["endpoint"].(string) // tcp://%s:%d?username=%s&password=%s&database=%s&read_timeout=%d&write_timeout=%d
-	var table, _ = config.Options["table"].(string)
-	var ddl, _ = config.Options["ddl"].(map[string]interface{})
-	var columns, _ = ddl["columns"].([]interface{})
-	var engine, _ = ddl["engine"].(string)
+	var con *sql.DB
+	var truncate, _ = config["truncate"].(bool)
+	var database, _ = config["database"].(string)
+	var endpoint, _ = config["endpoint"].(string)
+	var table, _ = config["table"].(string)
+	var create, _ = config["create"].(bool)
+	var columns, _ = config["columns"].([]interface{})
+	var engine, _ = config["engine"].(string)
 	var tables = make([]string, 0)
-	var rows *sql.Rows
 
-	if db, err = sql.Open("clickhouse", endpoint); err != nil {
+	if ok, _ := regexp.MatchString(`^[\p{L}_][\p{L}\p{N}@$#_]{0,127}$`, database); !ok {
+		return errors.New(fmt.Sprintf("invalid database name `%s`", database))
+	}
+
+	if ok, _ := regexp.MatchString(`^[\p{L}_][\p{L}\p{N}@$#_]{0,127}$`, table); !ok {
+		return errors.New(fmt.Sprintf("invalid table name `%s`", table))
+	}
+
+	if con, err = sql.Open("clickhouse", endpoint); err != nil {
 		return err
 	}
 
-	if err = create(db, database, table, columns, engine); err != nil {
+	if tables, err = showTables(con, database, table); err != nil {
 		return err
 	}
 
-	if rows, err = db.Query("SHOW TABLES"); err != nil {
-		return err
-	}
+	if truncate && InSliceString(table, tables) {
 
-	for rows.Next() {
-		t := ""
-		err := rows.Scan(&t)
-		if err != nil {
+		if err = truncateTable(con, database, table); err != nil {
 			return err
 		}
-		tables = append(tables, t)
+
+		create = true
+
 	}
 
-	if !inSlice(table, tables) {
+	if create {
+
+		if engine == "" {
+			engine = "ENGINE Memory"
+		}
+
+		if err = createTable(con, database, table, columns, engine); err != nil {
+			return err
+		}
+
+		if tables, err = showTables(con, database, table); err != nil {
+			return err
+		}
+
+	}
+
+	if !InSliceString(table, tables) {
 		return fmt.Errorf("table not found `%s`.`%s`", database, table)
-	}
-
-	if truncate {
-
-		_, _ = fmt.Fprintln(os.Stdout, "truncating table", table, "...")
-
-		var q string
-
-		row := db.QueryRow(fmt.Sprintf("SHOW CREATE TABLE `%s`.`%s`", database, table))
-
-		err := row.Scan(&q)
-
-		if err != nil {
-			return err
-		}
-
-		if _, err := db.Exec(fmt.Sprintf("DROP TABLE `%s`.`%s`", database, table)); err != nil {
-			return err
-		}
-
-		if _, err := db.Exec(q); err != nil {
-			return err
-		}
-
 	}
 
 	d.Columns = columns
 	d.Database = database
 	d.Table = table
-	d.DB = db
+	d.DB = con
 
 	return nil
 
 }
 
-// GetTask ...
-func (d *clickhouseDestination) GetTask(data [][]interface{}) (gomulus.InsertionTask, error) {
+func (d *clickhouseDestination) PreProcessData(data [][]interface{}) ([][]interface{}, error) {
 
-	return gomulus.InsertionTask{
-		Meta: map[string]interface{}{},
-		Data: data,
-	}, nil
+	return data, nil
 
 }
 
-// ProcessTask ...
-func (d *clickhouseDestination) ProcessTask(InsertionTask gomulus.InsertionTask) (int, error) {
+func (d *clickhouseDestination) PersistData(data [][]interface{}) (int, error) {
 
-	db := d.DB
+	con := d.DB
 
 	marks := ""
-	for _, row := range InsertionTask.Data {
+	for _, row := range data {
 		for range row {
 			marks += "?,"
 		}
@@ -122,17 +113,17 @@ func (d *clickhouseDestination) ProcessTask(InsertionTask gomulus.InsertionTask)
 
 	query := fmt.Sprintf("INSERT INTO `%s`.`%s` VALUES (%s)", d.Database, d.Table, marks)
 
-	tx, _ := db.Begin()
+	tx, _ := con.Begin()
 
 	stmt, err := tx.Prepare(query)
 
 	if err != nil {
-		return len(InsertionTask.Data), err
+		return len(data), err
 	}
 
 	defer stmt.Close()
 
-	for _, row := range InsertionTask.Data {
+	for _, row := range data {
 
 		parsedRow := make([]interface{}, 0, len(row))
 
@@ -150,12 +141,6 @@ func (d *clickhouseDestination) ProcessTask(InsertionTask gomulus.InsertionTask)
 			columnString := string(columnBytes)
 
 			switch columnType {
-			case "UInt8":
-				if v, err := strconv.ParseInt(columnString, 10, 8); err == nil {
-					parsedRow = append(parsedRow, uint8(v))
-				} else {
-					parsedRow = append(parsedRow, uint8(0))
-				}
 			case "Boolean":
 				switch columnString {
 				case "1":
@@ -166,6 +151,12 @@ func (d *clickhouseDestination) ProcessTask(InsertionTask gomulus.InsertionTask)
 					parsedRow = append(parsedRow, uint8(1))
 				default:
 					parsedRow = append(parsedRow, 0)
+				}
+			case "UInt8":
+				if v, err := strconv.ParseInt(columnString, 10, 8); err == nil {
+					parsedRow = append(parsedRow, uint8(v))
+				} else {
+					parsedRow = append(parsedRow, uint8(0))
 				}
 			case "UInt16":
 				if v, err := strconv.ParseInt(columnString, 10, 16); err == nil {
@@ -240,29 +231,26 @@ func (d *clickhouseDestination) ProcessTask(InsertionTask gomulus.InsertionTask)
 		}
 
 		if _, err = stmt.Exec(parsedRow...); err != nil {
-			return len(InsertionTask.Data), err
+			return len(data), err
 		}
+
 	}
 
 	if err := tx.Commit(); err != nil {
-		return len(InsertionTask.Data), err
+		return len(data), err
 	}
 
-	return len(InsertionTask.Data), err
+	return len(data), err
 
 }
 
-func create(con *sql.DB, database string, table string, columns []interface{}, engine string) error {
+func createTable(con *sql.DB, database string, table string, columns []interface{}, engine string) error {
 
 	var err error
-
-	// TODO validate database name
 
 	if _, err = con.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`;", database)); err != nil {
 		return err
 	}
-
-	// TODO validate table name
 
 	query := fmt.Sprintf("CREATE TABLE IF NOT EXISTS `%s`.`%s` (", database, table)
 
@@ -287,11 +275,58 @@ func create(con *sql.DB, database string, table string, columns []interface{}, e
 		return fmt.Errorf("error while executing '%s':\n%s", query, err.Error())
 	}
 
+	return err
+
+}
+
+func truncateTable(con *sql.DB, database string, table string) error {
+
+	var create string
+
+	row := con.QueryRow(fmt.Sprintf("SHOW CREATE TABLE `%s`.`%s`", database, table))
+
+	err := row.Scan(&create)
+
+	if err != nil {
+		return err
+	}
+
+	if _, err := con.Exec(fmt.Sprintf("DROP TABLE `%s`.`%s`", database, table)); err != nil {
+		return err
+	}
+
 	return nil
 
 }
 
-func inSlice(a string, list []string) bool {
+func showTables(con *sql.DB, database string, table string) ([]string, error) {
+
+	var err error
+	var rows *sql.Rows
+	var tables []string
+
+	if _, err = con.Exec(fmt.Sprintf("USE `%s`", database)); err != nil {
+		return nil, err
+	}
+
+	if rows, err = con.Query("SHOW TABLES"); err != nil {
+		return nil, err
+	}
+
+	for rows.Next() {
+		t := ""
+		err := rows.Scan(&t)
+		if err != nil {
+			return nil, err
+		}
+		tables = append(tables, t)
+	}
+
+	return tables, nil
+
+}
+
+func InSliceString(a string, list []string) bool {
 
 	for _, b := range list {
 		if b == a {
