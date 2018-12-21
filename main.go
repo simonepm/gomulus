@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"gomulus"
@@ -41,7 +42,7 @@ func main() {
 
 	flag.Parse()
 
-	var config = gomulus.Config{}
+	var config gomulus.Config
 	var configPath string
 	var configFile *os.File
 
@@ -57,7 +58,7 @@ func main() {
 
 	_ = configFile.Close()
 
-	if err = config.Unmarshal(configJSON); err != nil {
+	if err = json.Unmarshal(configJSON, &config); err != nil {
 		log.Fatal(err.Error())
 	}
 
@@ -82,7 +83,7 @@ func main() {
 
 	log.Print("starting...")
 
-	if SourceInstance, DestinationInstance, err = Start(Source, Destination, config.Plugins); err != nil {
+	if SourceInstance, DestinationInstance, err = Start(Source, Destination); err != nil {
 		log.Fatal(err.Error())
 	}
 
@@ -101,8 +102,6 @@ func main() {
 						log.Print("failed data fetching on queue ", q, "; an error occurred: ", err.Error())
 
 					} else {
-
-						data, err := DestinationInstance.PreProcessData(data)
 
 						if err != nil {
 
@@ -237,20 +236,21 @@ func Start(Source gomulus.DriverConfig, Destination gomulus.DriverConfig) (gomul
 
 	default:
 
-		pluginPath, err = filepath.Abs(Source.Plugin)
+		pluginPath, err := filepath.Abs(Source.Plugin)
 		if err != nil {
 			break
 		}
-		plug, err := plugin.Open(plugin.Path)
+		plug, err := plugin.Open(pluginPath)
 		if err != nil {
 			break
 		}
-		symbol, err := plug.Lookup(pc.Name)
+		symbol, err := plug.Lookup(Source.Driver)
 		if err != nil {
 			break
 		}
-		source, err = symbol.(gomulus.SourceInterface)
-		if err != nil {
+		var ok bool
+		source, ok = symbol.(gomulus.SourceInterface)
+		if !ok {
 			break
 		}
 
@@ -260,7 +260,7 @@ func Start(Source gomulus.DriverConfig, Destination gomulus.DriverConfig) (gomul
 
 	if !found {
 
-		return nil, nil, fmt.Errorf("no source driver found under the name `%s`", Source.Driver, err.Error())
+		return nil, nil, fmt.Errorf("no source driver found under the name `%s`: %s", Source.Driver, err.Error())
 
 	}
 
@@ -281,20 +281,21 @@ func Start(Source gomulus.DriverConfig, Destination gomulus.DriverConfig) (gomul
 
 	default:
 
-		pluginPath, err = filepath.Abs(Destination.Plugin)
+		pluginPath, err := filepath.Abs(Destination.Plugin)
 		if err != nil {
 			break
 		}
-		plug, err := plugin.Open(plugin.Path)
+		plug, err := plugin.Open(pluginPath)
 		if err != nil {
 			break
 		}
-		symbol, err := plug.Lookup(pc.Name)
+		symbol, err := plug.Lookup(Destination.Driver)
 		if err != nil {
 			break
 		}
-		destination, err = symbol.(gomulus.DestinationInterface)
-		if err != nil {
+		var ok bool
+		destination, ok = symbol.(gomulus.DestinationInterface)
+		if !ok {
 			break
 		}
 
@@ -303,9 +304,7 @@ func Start(Source gomulus.DriverConfig, Destination gomulus.DriverConfig) (gomul
 	}
 
 	if !found {
-
-		return nil, nil, fmt.Errorf("no destination driver found under the name `%s`", Destination.Driver, err.Error())
-
+		return nil, nil, fmt.Errorf("no destination driver found under the name `%s`: %s", Destination.Driver, err.Error())
 	}
 
 	log.Print(fmt.Sprintf("starting a new `%s` source driver instance...", Source.Driver))
@@ -329,6 +328,8 @@ func Start(Source gomulus.DriverConfig, Destination gomulus.DriverConfig) (gomul
 	for id, queue := range FetchPool {
 		lengths[id] = len(queue)
 	}
+
+	log.Print(fmt.Sprintf("processing %d source driver jobs...", len(jobs)))
 
 	go func() {
 

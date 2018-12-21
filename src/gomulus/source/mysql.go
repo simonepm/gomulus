@@ -65,7 +65,7 @@ func (s *DefaultMysqlSource) New(config map[string]interface{}) error {
 		tables = append(tables, t)
 	}
 
-	if !inSlice(table, tables) {
+	if !InSliceString(table, tables) {
 		return fmt.Errorf("table not found `%s`.`%s`", database, table)
 	}
 
@@ -160,7 +160,7 @@ func Select(db *sql.DB, query string) ([][]interface{}, error) {
 
 }
 
-func inSlice(a string, list []string) bool {
+func InSliceString(a string, list []string) bool {
 
 	for _, b := range list {
 		if b == a {
